@@ -1,0 +1,14 @@
+{
+  "name": "组队竞速（队员流程示例）",
+  "description": "组队玩法中非房主账号执行本流程：进入房间列表 → 接受邀请 / 加入房间 → 等待房主开始 → 结算截图。命名规则为 {玩法Id}.member.json。",
+  "_模板清单": [ "hall_multiplayer", "room_accept_invite", "room_ready_button", "race_finish_panel" ],
+  "steps": [
+    { "type": "log", "text": "第 {round} 局：组队竞速（{role}）" },
+    { "type": "clickImage", "template": "hall_multiplayer", "threshold": 0.85, "timeoutMs": 15000 },
+    { "type": "clickImage", "template": "room_accept_invite", "threshold": 0.85, "timeoutMs": 30000 },
+    { "type": "clickImage", "template": "room_ready_button", "threshold": 0.85, "timeoutMs": 20000, "required": false },
+    { "type": "expectImage", "template": "race_finish_panel", "threshold": 0.8, "timeoutMs": 300000, "failReason": "timeout" },
+    { "type": "saveReward" },
+    { "type": "wait", "timeoutMs": 3000 }
+  ]
+}

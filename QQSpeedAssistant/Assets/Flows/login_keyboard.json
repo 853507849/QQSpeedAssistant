@@ -1,0 +1,21 @@
+{
+  "name": "登录流程（键盘版）",
+  "description": "不依赖鼠标坐标的备选登录方案：只在账号框上点一次拿到焦点，之后用 Tab 切到密码框、回车提交。多屏／显示器缩放导致点击总偏移时，把本文件内容覆盖到 flows/login.json 即可切换。",
+  "_模板清单": [ "login_account_box", "login_button", "login_wrong_password" ],
+  "steps": [
+    { "type": "log", "text": "开始登录（键盘版） {account}（{server}）" },
+    { "type": "clickImage", "template": "login_account_box", "threshold": 0.85, "timeoutMs": 15000, "failReason": "assert_failed", "verify": true, "verifyAttempts": 2 },
+    { "type": "wait", "timeoutMs": 300 },
+    { "type": "clearText" },
+    { "type": "typeText", "text": "{account}", "verify": true },
+    { "type": "key", "key": "Tab" },
+    { "type": "wait", "timeoutMs": 200 },
+    { "type": "clearText" },
+    { "type": "typeText", "text": "{password}" },
+    { "type": "key", "key": "Enter" },
+    { "type": "wait", "timeoutMs": 600 },
+    { "type": "expectNoImage", "template": "login_wrong_password", "threshold": 0.8, "timeoutMs": 6000, "failReason": "wrong_password", "required": false },
+    { "type": "waitImageGone", "template": "login_button", "threshold": 0.85, "timeoutMs": 90000, "failReason": "timeout" },
+    { "type": "waitImage", "template": "hall_main", "threshold": 0.8, "timeoutMs": 20000, "required": false }
+  ]
+}

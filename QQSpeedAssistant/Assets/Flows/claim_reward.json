@@ -1,0 +1,19 @@
+﻿{
+  "name": "领取奖励（通用）",
+  "description": "结算后按模板点击「领取」和「确定」。可直接把这几步复制进任何玩法流程。",
+  "_模板清单": [
+    "reward_claim",
+    "reward_claim_confirm"
+  ],
+  "steps": [
+    {
+      "type": "claimReward",
+      "templates": [
+        "reward_claim",
+        "reward_claim_confirm"
+      ],
+      "timeoutMs": 5000,
+      "required": false
+    }
+  ]
+}

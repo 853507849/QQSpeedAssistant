@@ -1,0 +1,17 @@
+{
+  "name": "个人竞速（示例玩法流程）",
+  "description": "演示一个完整玩法流程：进入多人游戏 → 快速加入 → 竞速 → 个人竞速 → 开始匹配 → 等待结算 → 截图保存奖励 → 返回大厅。其他玩法可整体复制本文件，只替换模板与点击步骤。",
+  "_模板清单": [ "hall_multiplayer", "hall_quick_join", "mode_race", "mode_personal_race", "match_start_button", "race_finish_panel", "race_finish_confirm" ],
+  "steps": [
+    { "type": "log", "text": "第 {round} 局：个人竞速" },
+    { "type": "clickImage", "template": "hall_multiplayer", "threshold": 0.85, "timeoutMs": 15000 },
+    { "type": "clickImage", "template": "hall_quick_join", "threshold": 0.85, "timeoutMs": 10000 },
+    { "type": "clickImage", "template": "mode_race", "threshold": 0.85, "timeoutMs": 10000 },
+    { "type": "clickImage", "template": "mode_personal_race", "threshold": 0.85, "timeoutMs": 10000 },
+    { "type": "clickImage", "template": "match_start_button", "threshold": 0.85, "timeoutMs": 15000 },
+    { "type": "expectImage", "template": "race_finish_panel", "threshold": 0.8, "timeoutMs": 240000, "failReason": "timeout" },
+    { "type": "saveReward" },
+    { "type": "clickImage", "template": "race_finish_confirm", "threshold": 0.85, "timeoutMs": 15000, "required": false },
+    { "type": "wait", "timeoutMs": 2000 }
+  ]
+}

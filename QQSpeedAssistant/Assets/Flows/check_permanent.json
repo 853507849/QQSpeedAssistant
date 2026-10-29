@@ -1,0 +1,21 @@
+﻿{
+  "name": "永久奖励判定（通用）",
+  "description": "结算面板上出现「永久」角标就单独截图，存到 User/rewards/{账号}/永久_*.png。",
+  "_模板清单": [
+    "permanent_badge",
+    "permanent_car"
+  ],
+  "steps": [
+    {
+      "type": "checkPermanent",
+      "templates": [
+        "permanent_badge",
+        "permanent_car"
+      ],
+      "threshold": 0.85,
+      "timeoutMs": 3000,
+      "required": false,
+      "text": "永久"
+    }
+  ]
+}

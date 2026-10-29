@@ -1,0 +1,21 @@
+# ── 构建产物 ──
+bin/
+obj/
+
+# ── 用户数据（含账号密码明文，绝不入库）──
+User/
+templates/*.png
+*.user
+*.tmp
+
+# ── IDE / 编辑器 ──
+.vs/
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# ── 系统 ──
+Thumbs.db
+desktop.ini
+.DS_Store

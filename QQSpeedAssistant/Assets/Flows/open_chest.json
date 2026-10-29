@@ -1,0 +1,19 @@
+﻿{
+  "name": "开宝箱（通用）",
+  "description": "宝箱出现才点开，没出现视为当日已开完，不报错。",
+  "_模板清单": [
+    "reward_chest",
+    "reward_chest_open"
+  ],
+  "steps": [
+    {
+      "type": "openChest",
+      "templates": [
+        "reward_chest",
+        "reward_chest_open"
+      ],
+      "timeoutMs": 4000,
+      "required": false
+    }
+  ]
+}

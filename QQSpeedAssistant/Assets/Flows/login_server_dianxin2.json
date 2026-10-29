@@ -1,0 +1,35 @@
+﻿{
+  "name": "选择大区：电信2",
+  "description": "飞车登录界面的「大区」通常是三个单选（电信区／联通区／电信2区），不是下拉框。这里两步都做了：采过 server_dropdown 就按下拉走，否则按相对坐标直接点单选按钮。坐标比例取自 1200x900 客户端实测；换分辨率仍按比例换算，界面大改后需重测。",
+  "_模板清单": [
+    "server_dropdown",
+    "server_option_dianxin2"
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "text": "选择大区：电信2"
+    },
+    {
+      "type": "clickImage",
+      "template": "server_dropdown",
+      "threshold": 0.85,
+      "timeoutMs": 2000,
+      "required": false
+    },
+    {
+      "type": "clickImage",
+      "template": "server_option_dianxin2",
+      "threshold": 0.85,
+      "timeoutMs": 2000,
+      "required": false,
+      "fallbackXRatio": 0.878,
+      "fallbackYRatio": 0.418
+    },
+    {
+      "type": "randomWait",
+      "minMs": 200,
+      "maxMs": 600
+    }
+  ]
+}

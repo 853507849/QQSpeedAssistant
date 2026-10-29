@@ -1,0 +1,14 @@
+{
+  "name": "降帧流程",
+  "description": "登录后立即执行，把游戏内帧率调到较低档位，降低多开时的显卡与 CPU 占用。也可以改成点击「画质设置 → 低画质」。",
+  "_模板清单": [ "hall_setting_button", "setting_video_tab", "setting_fps_low", "setting_confirm_button" ],
+  "steps": [
+    { "type": "log", "text": "调整帧率到 {fps} FPS" },
+    { "type": "clickImage", "template": "hall_setting_button", "threshold": 0.85, "timeoutMs": 15000, "required": false },
+    { "type": "clickImage", "template": "setting_video_tab", "threshold": 0.85, "timeoutMs": 10000, "required": false },
+    { "type": "clickImage", "template": "setting_fps_low", "threshold": 0.85, "timeoutMs": 10000, "required": false },
+    { "type": "clickImage", "template": "setting_confirm_button", "threshold": 0.85, "timeoutMs": 8000, "required": false },
+    { "type": "key", "key": "Esc" },
+    { "type": "wait", "timeoutMs": 800 }
+  ]
+}

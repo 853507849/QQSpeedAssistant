@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<UseWPF>true</UseWPF>
+		<LangVersion>14.0</LangVersion>
+		<PlatformTarget>x64</PlatformTarget>
+		<!-- 游戏以管理员运行，输入才能被系统放行 -->
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+		<AssemblyName>QQSpeedAssistant</AssemblyName>
+		<RootNamespace>QQSpeedAssistant</RootNamespace>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+		<PackageReference Include="OpenCvSharp4.WpfExtensions" Version="4.11.0.20250507" />
+		<PackageReference Include="WPF-UI" Version="4.3.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- 复用工作区已有的抓屏与键鼠模拟实现，保持技术栈一致 -->
+		<ProjectReference Include="..\..\better-genshin-impact-refactor-20260930\Fischless.GameCapture\Fischless.GameCapture.csproj" />
+		<ProjectReference Include="..\..\better-genshin-impact-refactor-20260930\Fischless.WindowsInput\Fischless.WindowsInput.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- Interception 驱动级输入的原生库（x64），随生成复制到输出目录，DllImport 才能找到 -->
+		<None Include="..\tools\Interception\Interception\library\x64\interception.dll">
+			<Link>interception.dll</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- 自动化流程定义（需要按各自客户端校准） -->
+		<None Update="Assets\Flows\*.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+</Project>

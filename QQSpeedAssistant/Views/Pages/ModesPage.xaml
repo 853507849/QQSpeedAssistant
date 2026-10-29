@@ -1,0 +1,163 @@
+<UserControl x:Class="QQSpeedAssistant.Views.Pages.ModesPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:QQSpeedAssistant.Views.Controls">
+    <Grid Margin="26,24,26,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="玩法任务" Style="{StaticResource PageTitle}" />
+            <TextBlock Text="为每种玩法设定任务局数；标「多开」的玩法默认需要多个账号同时在线，勾上「单号匹配」则由系统随机配队友、一个号也能跑"
+                       Style="{StaticResource PageSubtitle}" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,16,0,10">
+                <controls:DropDownSelector Width="132"
+                                           ItemsSource="{Binding Categories}"
+                                           SelectedItem="{Binding SelectedCategory, Mode=TwoWay}" />
+                <CheckBox Content="只看已启用"
+                          IsChecked="{Binding OnlyEnabled, Mode=TwoWay}"
+                          Margin="16,0,0,0"
+                          VerticalAlignment="Center" />
+                <Button Content="全部启用" Command="{Binding EnableAllCommand}" Margin="20,0,0,0" />
+                <Button Content="全部关闭" Command="{Binding DisableAllCommand}" Margin="8,0,0,0" />
+                <Button Content="重置局数" Command="{Binding ResetRoundsCommand}" Margin="8,0,0,0" />
+                <Button Content="采集模板" Style="{StaticResource PrimaryButton}" Command="{Binding CaptureTemplateCommand}" Margin="8,0,0,0" />
+                <Button Content="打开流程目录" Command="{Binding OpenFlowFolderCommand}" Margin="8,0,0,0" />
+                <Button Content="打开模板目录" Command="{Binding OpenTemplateFolderCommand}" Margin="8,0,0,0" />
+            </StackPanel>
+
+            <TextBlock Text="{Binding SummaryText, Mode=OneWay}" Style="{StaticResource Muted}" Margin="0,0,0,12" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0">
+            <DockPanel>
+                <!-- 表头 -->
+                <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="52" />
+                        <ColumnDefinition Width="176" />
+                        <ColumnDefinition Width="58" />
+                        <ColumnDefinition Width="86" />
+                        <ColumnDefinition Width="98" />
+                        <ColumnDefinition Width="62" />
+                        <ColumnDefinition Width="76" />
+                        <ColumnDefinition Width="76" />
+                        <ColumnDefinition Width="64" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="启用" Style="{StaticResource Muted}" />
+                    <TextBlock Grid.Column="1" Text="玩法" Style="{StaticResource Muted}" />
+                    <TextBlock Grid.Column="2" Text="类型" Style="{StaticResource Muted}" />
+                    <TextBlock Grid.Column="3" Text="档期" Style="{StaticResource Muted}" />
+                    <TextBlock Grid.Column="4" Text="人数" Style="{StaticResource Muted}" />
+                    <TextBlock Grid.Column="5" Text="局数" Style="{StaticResource Muted}" />
+                    <TextBlock Grid.Column="6" Text="奖励截图" Style="{StaticResource Muted}" />
+                    <TextBlock Grid.Column="7" Text="单号匹配" Style="{StaticResource Muted}" ToolTip="勾上后由系统随机配队友，单个账号也能跑" />
+                    <TextBlock Grid.Column="8" Text="流程" Style="{StaticResource Muted}" />
+                    <TextBlock Grid.Column="9" Text="游戏内入口" Style="{StaticResource Muted}" />
+                </Grid>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding VisibleItems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderBrush="{StaticResource PanelBorderBrush}"
+                                        BorderThickness="0,0,0,1"
+                                        Padding="0,6">
+                                    <Grid ToolTip="{Binding Note, Mode=OneWay}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="52" />
+                                            <ColumnDefinition Width="176" />
+                                            <ColumnDefinition Width="58" />
+                                            <ColumnDefinition Width="86" />
+                                            <ColumnDefinition Width="98" />
+                                            <ColumnDefinition Width="62" />
+                                            <ColumnDefinition Width="76" />
+                                            <ColumnDefinition Width="76" />
+                                            <ColumnDefinition Width="64" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <CheckBox IsChecked="{Binding Config.Enabled, Mode=TwoWay}"
+                                                  HorizontalAlignment="Left"
+                                                  VerticalAlignment="Center" />
+
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name, Mode=OneWay}" FontSize="12.5" />
+                                            <Border Background="#2E2A1A"
+                                                    CornerRadius="4"
+                                                    Padding="5,1"
+                                                    Margin="6,0,0,0"
+                                                    Visibility="{Binding IsTeamMode, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock Text="多开"
+                                                           FontSize="10.5"
+                                                           Foreground="{StaticResource WarnBrush}" />
+                                            </Border>
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding CategoryText, Mode=OneWay}"
+                                                   Style="{StaticResource Muted}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding AvailabilityText, Mode=OneWay}"
+                                                   Style="{StaticResource Muted}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="4"
+                                                   Text="{Binding PlayerCountText, Mode=OneWay}"
+                                                   Style="{StaticResource Muted}"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" />
+
+                                        <TextBox Grid.Column="5"
+                                                 Text="{Binding Config.Rounds, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                 Width="46"
+                                                 HorizontalAlignment="Left"
+                                                 TextAlignment="Center" />
+
+                                        <CheckBox Grid.Column="6"
+                                                  IsChecked="{Binding Config.CaptureReward, Mode=TwoWay}"
+                                                  HorizontalAlignment="Left"
+                                                  VerticalAlignment="Center" />
+
+                                        <CheckBox Grid.Column="7"
+                                                  IsChecked="{Binding Config.SoloMatch, Mode=TwoWay}"
+                                                  HorizontalAlignment="Left"
+                                                  VerticalAlignment="Center"
+                                                  ToolTip="需要多人的玩法也可以只用一个号跑：靠「快速加入」让系统随机配队友" />
+
+                                        <TextBlock Grid.Column="8"
+                                                   Text="{Binding FlowState, Mode=OneWay}"
+                                                   FontSize="11.5"
+                                                   VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource WarnBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasFlow, Mode=OneWay}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+
+                                        <TextBlock Grid.Column="9"
+                                                   Text="{Binding EntryPath, Mode=OneWay}"
+                                                   Style="{StaticResource Muted}"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding EntryPath, Mode=OneWay}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

@@ -1,0 +1,120 @@
+﻿{
+  "name": "互助接力赛（白票流程）",
+  "description": "白票跑法：大厅 → 多人游戏 → 快速加入 → 选模式 → 匹配 → 结算截图 → 永久判定 → 领奖 → 开宝箱 → 回大厅。所有模板都要按自己客户端采集；需要多人但只能开一个号时，在「玩法任务」勾上「单号匹配」。",
+  "_模板清单": [
+    "hall_main",
+    "hall_multiplayer",
+    "hall_quick_join",
+    "mode_mutual_relay",
+    "match_start_button",
+    "race_finish_panel",
+    "race_finish_confirm",
+    "permanent_badge",
+    "reward_claim",
+    "reward_claim_confirm",
+    "reward_chest",
+    "reward_chest_open",
+    "disconnected"
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "text": "第 {round} 局：互助接力赛"
+    },
+    {
+      "type": "expectNoImage",
+      "template": "disconnected",
+      "threshold": 0.8,
+      "timeoutMs": 1200,
+      "failReason": "disconnected",
+      "required": false
+    },
+    {
+      "type": "waitImageAny",
+      "templates": [
+        "hall_main",
+        "hall_multiplayer"
+      ],
+      "threshold": 0.85,
+      "timeoutMs": 15000,
+      "required": false
+    },
+    {
+      "type": "clickImage",
+      "template": "hall_multiplayer",
+      "threshold": 0.85,
+      "timeoutMs": 15000,
+      "required": false
+    },
+    {
+      "type": "clickImage",
+      "template": "hall_quick_join",
+      "threshold": 0.85,
+      "timeoutMs": 10000,
+      "required": false
+    },
+    {
+      "type": "clickImage",
+      "template": "mode_mutual_relay",
+      "threshold": 0.85,
+      "timeoutMs": 15000
+    },
+    {
+      "type": "clickImage",
+      "template": "match_start_button",
+      "threshold": 0.85,
+      "timeoutMs": 15000
+    },
+    {
+      "type": "expectImage",
+      "template": "race_finish_panel",
+      "threshold": 0.8,
+      "timeoutMs": 300000,
+      "failReason": "timeout"
+    },
+    {
+      "type": "saveReward"
+    },
+    {
+      "type": "checkPermanent",
+      "templates": [
+        "permanent_badge",
+        "permanent_car"
+      ],
+      "threshold": 0.85,
+      "timeoutMs": 1500,
+      "required": false,
+      "text": "互助接力赛"
+    },
+    {
+      "type": "clickImage",
+      "template": "race_finish_confirm",
+      "threshold": 0.85,
+      "timeoutMs": 15000,
+      "required": false
+    },
+    {
+      "type": "claimReward",
+      "templates": [
+        "reward_claim",
+        "reward_claim_confirm"
+      ],
+      "timeoutMs": 4000,
+      "required": false
+    },
+    {
+      "type": "openChest",
+      "templates": [
+        "reward_chest",
+        "reward_chest_open"
+      ],
+      "timeoutMs": 3000,
+      "required": false
+    },
+    {
+      "type": "randomWait",
+      "minMs": 400,
+      "maxMs": 1200
+    }
+  ]
+}

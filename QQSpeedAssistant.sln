@@ -1,0 +1,36 @@
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "QQSpeedAssistant", "QQSpeedAssistant\QQSpeedAssistant.csproj", "{89007778-AFB8-4007-B82F-1FE3F58C16F8}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Fischless.GameCapture", "..\better-genshin-impact-refactor-20260930\Fischless.GameCapture\Fischless.GameCapture.csproj", "{B482A286-0AF1-4B6A-BE14-FB950969611F}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Fischless.WindowsInput", "..\better-genshin-impact-refactor-20260930\Fischless.WindowsInput\Fischless.WindowsInput.csproj", "{F894F14B-EF0A-4BF4-9350-322A24CB3683}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{89007778-AFB8-4007-B82F-1FE3F58C16F8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{89007778-AFB8-4007-B82F-1FE3F58C16F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{89007778-AFB8-4007-B82F-1FE3F58C16F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{89007778-AFB8-4007-B82F-1FE3F58C16F8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B482A286-0AF1-4B6A-BE14-FB950969611F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B482A286-0AF1-4B6A-BE14-FB950969611F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B482A286-0AF1-4B6A-BE14-FB950969611F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B482A286-0AF1-4B6A-BE14-FB950969611F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F894F14B-EF0A-4BF4-9350-322A24CB3683}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F894F14B-EF0A-4BF4-9350-322A24CB3683}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F894F14B-EF0A-4BF4-9350-322A24CB3683}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F894F14B-EF0A-4BF4-9350-322A24CB3683}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4C3B0E52-5B6F-4E0F-9C2A-9B1D67E4A001}
+	EndGlobalSection
+EndGlobal

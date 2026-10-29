@@ -1,0 +1,43 @@
+﻿{
+  "name": "快速登录（QQ 登录态点头像）",
+  "description": "快速登录：先在本机 QQ 客户端用该账号登录过任意小游戏（留下登录态缓存），飞车登录界面就会出现该账号头像，直接点头像进游戏，不用输密码，也就不会触发验证码／异地改密／环境异常。找不到头像模板时会抛异常，登录服务会自动回退到 UIA 填表和键鼠流程。",
+  "_模板清单": [
+    "login_button",
+    "fast_login_avatar",
+    "hall_main"
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "text": "尝试快速登录 {account}"
+    },
+    {
+      "type": "expectImage",
+      "template": "login_button",
+      "threshold": 0.85,
+      "timeoutMs": 25000,
+      "failReason": "assert_failed"
+    },
+    {
+      "type": "clickImage",
+      "template": "fast_login_avatar",
+      "threshold": 0.88,
+      "timeoutMs": 8000,
+      "failReason": "assert_failed"
+    },
+    {
+      "type": "waitImageGone",
+      "template": "login_button",
+      "threshold": 0.85,
+      "timeoutMs": 60000,
+      "failReason": "assert_failed"
+    },
+    {
+      "type": "waitImage",
+      "template": "hall_main",
+      "threshold": 0.8,
+      "timeoutMs": 30000,
+      "required": false
+    }
+  ]
+}
