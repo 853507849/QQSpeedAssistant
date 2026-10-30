@@ -35,9 +35,12 @@ public sealed partial class AccountsPageViewModel : ObservableObject
     [ObservableProperty]
     private string _importText = "";
 
+    /// <summary>区服下拉的选项，界面直接绑定。</summary>
+    public IReadOnlyList<string> ServerChoices => ServerOptions.All;
+
     /// <summary>操作提示。</summary>
     [ObservableProperty]
-    private string _statusMessage = "支持格式：2139444541----ds111200----电信";
+    private string _statusMessage = "支持格式：2139444541----ds111200----电信区";
 
     /// <summary>当前选中账号。</summary>
     [ObservableProperty]
@@ -71,7 +74,7 @@ public sealed partial class AccountsPageViewModel : ObservableObject
             else
             {
                 existing.Password = parsed.Password;
-                existing.Server = parsed.Server;
+                existing.Server = ServerOptions.Normalize(parsed.Server);
                 updated++;
             }
         }
@@ -92,7 +95,13 @@ public sealed partial class AccountsPageViewModel : ObservableObject
     [RelayCommand]
     private void AddBlank()
     {
-        Accounts.Add(new AccountEntry { Account = "", Password = "", Server = "", Order = Accounts.Count + 1 });
+        Accounts.Add(new AccountEntry
+        {
+            Account = "",
+            Password = "",
+            Server = ServerOptions.Default,
+            Order = Accounts.Count + 1
+        });
         _services.Config.SaveAccounts();
         RefreshCounts();
         StatusMessage = "已添加一行，请填写账号与密码";

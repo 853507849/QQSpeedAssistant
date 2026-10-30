@@ -27,7 +27,9 @@ public sealed partial class SettingsPageViewModel : ObservableObject
         _selectedInputBackend = InputBackendOptions.First(o => o.Value == Settings.InputBackend);
         _inputBackendStatus = InputBackendFactory.DescribeAvailability(Settings);
         _selectedFinishAction = FinishActionOptions.First(o => o.Value == Settings.FinishAction);
-        _selectedServer = string.IsNullOrWhiteSpace(Settings.DefaultServer) ? NoServerOption : Settings.DefaultServer;
+        // 旧版本存的是「电信」「联通」「电二」这类写法，读回来先换成下拉里的标准值。
+        var savedServer = Models.ServerOptions.Normalize(Settings.DefaultServer);
+        _selectedServer = string.IsNullOrWhiteSpace(savedServer) ? NoServerOption : savedServer;
         _autoStartEnabled = _services.AutoStart.IsEnabled();
     }
 
@@ -71,8 +73,8 @@ public sealed partial class SettingsPageViewModel : ObservableObject
         }
     }
 
-    /// <summary>可选大区。</summary>
-    public IReadOnlyList<string> ServerOptions { get; } = [NoServerOption, "电信", "电信二", "联通", "网通"];
+    /// <summary>可选大区，与账号页的下拉保持同一套写法。</summary>
+    public IReadOnlyList<string> ServerOptions { get; } = [NoServerOption, .. Models.ServerOptions.All];
 
     /// <summary>默认大区（空表示按账号文本里的区服）。</summary>
     [ObservableProperty]

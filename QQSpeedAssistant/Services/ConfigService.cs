@@ -45,10 +45,14 @@ public sealed class ConfigService
         var accounts = Read<List<AccountEntry>>(PathService.AccountsFile) ?? [];
         Accounts.Clear();
         var order = 1;
+        var serverChanged = false;
         foreach (var account in accounts.Where(a => !string.IsNullOrWhiteSpace(a.Account)))
         {
             account.Order = order++;
             account.Status = AccountRunStatus.NotStarted;
+            var before = account.Server;
+            account.Server = NormalizeServer(account);
+            serverChanged |= !string.Equals(before, account.Server, StringComparison.Ordinal);
             Accounts.Add(account);
         }
 
@@ -66,6 +70,40 @@ public sealed class ConfigService
         }
 
         _log.Info($"配置已加载：{Accounts.Count} 个账号，{Tasks.Count(t => t.Enabled)} 个玩法启用", "配置");
+
+        // 区服写法有改动才回写文件，免得每次启动都重复换算、也免得用户下次看到旧值。
+        if (serverChanged)
+        {
+            SaveAccounts();
+        }
+    }
+
+    /// <summary>
+    /// 把账号上的区服折成「电信区／联通区／电信2区」三种标准写法。
+    /// 账号页那一列是下拉框，存的必须是下拉里的值，否则界面上会显示成空白。
+    /// 认不出的写法会归到默认区服并记一条警告，避免它静默失效。
+    /// </summary>
+    private string NormalizeServer(AccountEntry account)
+    {
+        var normalized = ServerOptions.Normalize(account.Server);
+        if (normalized.Length == 0)
+        {
+            return "";
+        }
+
+        if (!ServerOptions.IsKnown(normalized))
+        {
+            _log.Warn($"账号 {account.Account} 的区服「{account.Server}」不在下拉选项"
+                      + $"（{string.Join("／", ServerOptions.All)}）里，已归为「{ServerOptions.Default}」", "配置");
+            return ServerOptions.Default;
+        }
+
+        if (!string.Equals(normalized, account.Server, StringComparison.Ordinal))
+        {
+            _log.Info($"账号 {account.Account} 的区服「{account.Server}」已统一写作「{normalized}」", "配置");
+        }
+
+        return normalized;
     }
 
     /// <summary>保存账号列表。</summary>

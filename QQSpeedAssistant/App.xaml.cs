@@ -93,6 +93,13 @@ public partial class App : Application
                 return;
             }
 
+            // 区服自检：验证账号页区服下拉的三项取值与旧写法归一化
+            if (e.Args.Contains("--servercheck"))
+            {
+                Shutdown(RunServerCheck());
+                return;
+            }
+
             // 匹配自检：拿一张截图把 templates 里所有模板跑一遍多尺度匹配，报告最佳分数与缩放比
             if (e.Args.Contains("--matchcheck"))
             {
@@ -124,6 +131,20 @@ public partial class App : Application
                 return;
             }
 
+            // 下拉框自检：验证账号页「区服」下拉能展开、改值能写回账号
+            if (e.Args.Contains("--combocheck"))
+            {
+                RunComboCheck(_services, e.Args.Contains("--keep"));
+                return;
+            }
+
+            // 真实点击自检：用真实鼠标点下拉框，复现「点上去没反应」
+            if (e.Args.Contains("--comboclick"))
+            {
+                RunComboClickCheck(_services);
+                return;
+            }
+
             var viewModel = new MainWindowViewModel(_services);
             var window = new Views.MainWindow { DataContext = viewModel };
             MainWindow = window;
@@ -151,6 +172,510 @@ public partial class App : Application
             WriteStartupError(ex);
             Shutdown(2);
         }
+    }
+
+    /// <summary>
+    /// 下拉框自检：真的把账号页建出来（窗口放在屏幕外，不打扰操作），
+    /// 检查「区服」那一列的下拉框能不能展开、改值能不能写回账号。
+    /// 用法：QQSpeedAssistant.exe --combocheck（报告写进 User/debug/combocheck.txt）。
+    /// </summary>
+    private void RunComboCheck(AppServices services, bool keepWindow)
+    {
+        var report = new System.Text.StringBuilder();
+        report.AppendLine("区服下拉自检：选项 = " + string.Join(" ／ ", ServerOptions.All));
+        report.AppendLine();
+
+        var vm = new AccountsPageViewModel(services);
+        var page = new Views.Pages.AccountsPage { DataContext = vm };
+        var window = new Window
+        {
+            Content = page,
+            Width = 1100,
+            Height = 780,
+            WindowStyle = WindowStyle.None,
+            ShowInTaskbar = false,
+            ShowActivated = false,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -6000,
+            Top = -6000
+        };
+
+        MainWindow ??= window;
+        window.Show();
+        window.UpdateLayout();
+        PumpDispatcher();
+
+        var combos = new List<System.Windows.Controls.ComboBox>();
+        CollectVisuals(page, combos);
+        report.AppendLine($"账号行数：{vm.Accounts.Count}　找到下拉框 {combos.Count} 个");
+
+        var failures = 0;
+        for (var i = 0; i < combos.Count; i++)
+        {
+            var combo = combos[i];
+            var items = combo.ItemsSource?.Cast<object>().Select(o => o?.ToString() ?? "").ToList() ?? [];
+            report.AppendLine($"  [{i}] 选项 {items.Count} 个（{string.Join("／", items)}）"
+                              + $"　选中={combo.SelectedIndex}／「{combo.SelectedItem}」"
+                              + $"　尺寸={combo.ActualWidth:0}x{combo.ActualHeight:0}"
+                              + $"　可用={combo.IsEnabled}　可点={combo.IsHitTestVisible}");
+            if (items.Count == 0)
+            {
+                failures++;
+                report.AppendLine("       [FAIL] ItemsSource 是空的，说明 ServerChoices 没绑上");
+            }
+        }
+
+        var account = vm.Accounts.FirstOrDefault();
+        if (combos.Count == 0 || account == null)
+        {
+            report.AppendLine("[FAIL] 页面上没有可用的下拉框或账号，无法继续验证");
+            failures++;
+        }
+        else
+        {
+            var combo = combos[0];
+            var original = account.Server;
+
+            // ① 模板里的展开按钮（鼠标点的就是它）能不能把下拉打开。
+            var toggle = combo.Template.FindName("DropDownToggle", combo)
+                as System.Windows.Controls.Primitives.ToggleButton;
+            report.AppendLine();
+            report.AppendLine($"[展开] 模板里的展开按钮：{(toggle == null ? "没找到" : "存在")}");
+            if (toggle == null)
+            {
+                failures++;
+            }
+            else
+            {
+                // 热区必须先存在：模板里的展开按钮如果被排成 0x0，鼠标点上去会落到外层边框，
+                // 表现就是「下拉框怎么点都没反应」——之前只改 IsChecked 的自检发现不了这个。
+                var hotZone = toggle.ActualWidth > 0 && toggle.ActualHeight > 0;
+                report.AppendLine($"[热区] 展开按钮尺寸 {toggle.ActualWidth:0}x{toggle.ActualHeight:0}"
+                                  + $"（下拉框 {combo.ActualWidth:0}x{combo.ActualHeight:0}） {(hotZone ? "[OK]" : "[FAIL]")}");
+                if (!hotZone)
+                {
+                    failures++;
+                    report.AppendLine("       [FAIL] 展开按钮被排成 0 尺寸，鼠标点不到它");
+                }
+
+                var centerHit = combo.InputHitTest(new Point(combo.ActualWidth / 2, combo.ActualHeight / 2))
+                    as System.Windows.DependencyObject;
+                var hitInsideToggle = IsDescendantOf(hotZone ? toggle : null, centerHit);
+                report.AppendLine($"[命中] 下拉框中心命中的是 {centerHit?.GetType().Name ?? "null"}，"
+                                  + $"属于展开按钮={hitInsideToggle} {(hitInsideToggle ? "[OK]" : "[FAIL]")}");
+                if (!hitInsideToggle)
+                {
+                    failures++;
+                    report.AppendLine("       [FAIL] 下拉框中心的点击不归展开按钮处理，鼠标点了不会有反应");
+                }
+
+                toggle.IsChecked = true;
+                PumpDispatcher();
+                var opened = combo.IsDropDownOpen;
+                var popupItems = CountPopupItems(combo);
+                report.AppendLine($"[展开] 按下展开按钮后 IsDropDownOpen={opened}，弹出层里的选项 {popupItems} 个");
+                if (!opened || popupItems != combo.Items.Count)
+                {
+                    failures++;
+                    report.AppendLine("       [FAIL] 下拉打不开或弹出层没生成选项，鼠标点上去会“点了没反应”");
+                }
+
+                toggle.IsChecked = false;
+                PumpDispatcher();
+            }
+
+            // ② 改选择能不能写回账号（绑定的核心）。
+            foreach (var (index, expected) in new[] { (1, ServerOptions.Liantong), (2, ServerOptions.Dianxin2) })
+            {
+                combo.SelectedIndex = index;
+                PumpDispatcher();
+                var pass = string.Equals(account.Server, expected, StringComparison.Ordinal);
+                if (!pass)
+                {
+                    failures++;
+                }
+
+                report.AppendLine($"[改值] SelectedIndex={index} → 账号区服「{account.Server}」"
+                                  + $"　期望「{expected}」 {(pass ? "[OK]" : "[FAIL]")}");
+            }
+
+            // 还原，别把用户数据改坏。
+            account.Server = original;
+            combo.SelectedItem = original;
+            PumpDispatcher();
+            report.AppendLine($"[还原] 账号区服已改回「{account.Server}」");
+        }
+
+        report.AppendLine();
+        report.AppendLine(failures == 0
+            ? "全部通过：下拉能展开、选项齐全、改值能写回账号。"
+            : $"发现 {failures} 处问题。");
+
+        var directory = Path.Combine(PathService.UserDir, "debug");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "combocheck.txt");
+        File.WriteAllText(path, report.ToString());
+        services.Log.Info($"下拉框自检完成：{path}", "自检");
+        Console.WriteLine(report.ToString());
+
+        if (!keepWindow)
+        {
+            window.Close();
+        }
+
+        Shutdown(failures == 0 ? 0 : 1);
+    }
+
+    /// <summary>
+    /// 真实点击自检：把账号页显示在屏幕左上角（无边框、置顶，几百毫秒后关闭），
+    /// 用真实鼠标事件点下拉框、再点第二项，看值有没有真的换过去。
+    /// 这是唯一能复现「鼠标点上去没反应」的办法——纯代码设置 IsDropDownOpen 是能过的。
+    /// 用法：QQSpeedAssistant.exe --comboclick（报告写进 User/debug/comboclick.txt）。
+    /// </summary>
+    private void RunComboClickCheck(AppServices services)
+    {
+        var report = new System.Text.StringBuilder();
+        report.AppendLine("区服下拉真实点击自检（会短暂弹出一个置顶窗口，并用真实鼠标点两下）");
+        report.AppendLine();
+
+        var vm = new AccountsPageViewModel(services);
+        var page = new Views.Pages.AccountsPage { DataContext = vm };
+        var window = new Window
+        {
+            Content = page,
+            Width = 1100,
+            Height = 760,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            Topmost = true,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = 60,
+            Top = 60
+        };
+
+        MainWindow ??= window;
+        window.Show();
+        window.Activate();
+        window.UpdateLayout();
+        PumpDispatcher();
+
+        var failures = 0;
+        var failuresReport = new List<string>();
+        NativeMethods.GetCursorPos(out var savedCursor);
+
+        var combos = new List<System.Windows.Controls.ComboBox>();
+        CollectVisuals(page, combos);
+        var account = vm.Accounts.FirstOrDefault();
+        if (combos.Count == 0 || account == null)
+        {
+            report.AppendLine("[FAIL] 没找到下拉框或账号");
+            failures++;
+        }
+        else
+        {
+            var combo = combos[0];
+            var original = account.Server;
+            report.AppendLine($"账号原区服：{original}");
+
+            // 0. 先把坐标换算本身验一遍：DPI、命中测试、以及「点普通按钮」的对照。
+            var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(window);
+            report.AppendLine($"[环境] DPI 缩放={dpi.DpiScaleX:0.##}　窗口位置={window.Left:0},{window.Top:0}");
+
+            var comboPoint = combo.PointToScreen(new Point(combo.ActualWidth / 2, combo.ActualHeight / 2));
+            var local = page.PointFromScreen(comboPoint);
+            var hit = page.InputHitTest(local) as System.Windows.DependencyObject;
+            report.AppendLine($"[命中测试] 下拉框屏幕坐标 {comboPoint.X:0},{comboPoint.Y:0} 命中的是 "
+                              + $"{hit?.GetType().Name ?? "null"}");
+
+            // 命中链：看清那个 Border 到底属于下拉框外框，还是模板里的展开按钮。
+            var chain = new List<string>();
+            var node = hit;
+            while (node != null && chain.Count < 7)
+            {
+                chain.Add(node is System.Windows.FrameworkElement element && !string.IsNullOrEmpty(element.Name)
+                    ? $"{node.GetType().Name}「{element.Name}」"
+                    : node.GetType().Name);
+                node = System.Windows.Media.VisualTreeHelper.GetParent(node);
+            }
+
+            report.AppendLine("[命中链] " + string.Join(" ← ", chain));
+            if (hit is not (System.Windows.Controls.ComboBox or System.Windows.Controls.Primitives.ToggleButton
+                or System.Windows.Controls.Border or System.Windows.Controls.Grid
+                or System.Windows.Controls.ContentPresenter or System.Windows.Shapes.Path
+                or System.Windows.Controls.ScrollViewer or System.Windows.Controls.ItemsControl
+                or System.Windows.Controls.TextBlock or System.Windows.Documents.Run))
+            {
+                failuresReport.Add($"坐标换算可能不准：那个点上命中 {hit?.GetType().Name ?? "null"} 而不是下拉框内部元素");
+            }
+
+            // 对照：点「添加一行」按钮，如果连按钮都点不动，就是坐标/注入问题而不是下拉框自己的问题。
+            var before = vm.Accounts.Count;
+            var addButton = new List<System.Windows.Controls.Button>();
+            CollectVisuals(page, addButton);
+            var addButtonControl = addButton.FirstOrDefault(b => (b.Content as string) == "添加一行");
+            if (addButtonControl != null)
+            {
+                ClickAt(addButtonControl.PointToScreen(
+                    new Point(addButtonControl.ActualWidth / 2, addButtonControl.ActualHeight / 2)));
+                var clicks = vm.Accounts.Count - before;
+                report.AppendLine($"[对照] 点「添加一行」后账号数 {before} → {vm.Accounts.Count} "
+                                  + (clicks == 1 ? "[OK] 点击链路正常" : "[FAIL] 连普通按钮都点不动"));
+                if (clicks != 1)
+                {
+                    failuresReport.Add("连普通按钮都点不动：坐标换算或鼠标注入有问题，不是下拉框的原因");
+                }
+
+                while (vm.Accounts.Count > before)
+                {
+                    vm.Accounts.RemoveAt(vm.Accounts.Count - 1);
+                }
+            }
+
+            // ① 真实点一下下拉框中心。拆成「按下」「抬起」两步，看是不是刚展开就被关掉。
+            // 同时挂上事件计数器：能分清「压根没收到点击」和「收到了但又被关掉」。
+            var toggleButton = combo.Template.FindName("DropDownToggle", combo)
+                as System.Windows.Controls.Primitives.ToggleButton;
+            var checkedCount = 0;
+            var uncheckedCount = 0;
+            var dropDownOpened = 0;
+            var dropDownClosed = 0;
+            var comboGotDown = 0;
+            if (toggleButton != null)
+            {
+                toggleButton.Checked += (_, _) => checkedCount++;
+                toggleButton.Unchecked += (_, _) => uncheckedCount++;
+            }
+
+            combo.DropDownOpened += (_, _) => dropDownOpened++;
+            combo.DropDownClosed += (_, _) => dropDownClosed++;
+            combo.PreviewMouseLeftButtonDown += (_, _) => comboGotDown++;
+
+            report.AppendLine($"[展开按钮] 尺寸={(toggleButton?.ActualWidth ?? -1):0}x{(toggleButton?.ActualHeight ?? -1):0}"
+                              + $"　可见={toggleButton?.IsVisible}　可点={toggleButton?.IsHitTestVisible}"
+                              + $"　可用={toggleButton?.IsEnabled}");
+
+            NativeMethods.SetCursorPos((int)Math.Round(comboPoint.X), (int)Math.Round(comboPoint.Y));
+            PumpDispatcher();
+            NativeMethods.mouse_event(0x0002, 0, 0, 0, 0);
+            PumpDispatcher();
+            var openedAfterDown = combo.IsDropDownOpen;
+            report.AppendLine($"[按下] IsDropDownOpen={openedAfterDown}　"
+                              + $"展开按钮 Checked={checkedCount}／Unchecked={uncheckedCount}　"
+                              + $"下拉 Opened={dropDownOpened}／Closed={dropDownClosed}　收到按下={comboGotDown}");
+
+            NativeMethods.mouse_event(0x0004, 0, 0, 0, 0);
+            PumpDispatcher();
+            var opened = combo.IsDropDownOpen;
+            report.AppendLine($"[抬起] IsDropDownOpen={opened}　"
+                              + $"展开按钮 Checked={checkedCount}／Unchecked={uncheckedCount}　"
+                              + $"下拉 Opened={dropDownOpened}／Closed={dropDownClosed}　收到按下={comboGotDown}");
+
+            if (comboGotDown == 0)
+            {
+                failures++;
+                failuresReport.Add("下拉框根本收不到鼠标按下事件：点击被上层元素吃掉了");
+            }
+            else if (checkedCount == 0)
+            {
+                failures++;
+                failuresReport.Add("按下事件到了下拉框，但模板里的展开按钮没有切换状态（ToggleButton 没收到点击）");
+            }
+            else if (openedAfterDown && !opened)
+            {
+                failures++;
+                failuresReport.Add("按下时能展开、抬起后又被关掉：抬起事件被当成「点了外面」，"
+                                   + "所以鼠标点上去看起来毫无反应");
+            }
+            else if (!opened)
+            {
+                failures++;
+                failuresReport.Add("真实点击下拉框没有展开，说明点击没落到展开按钮上");
+            }
+
+            // ② 真实点第二项（联通区）。
+            var popupItems = new List<System.Windows.Controls.ComboBoxItem>();
+            if (combo.Template.FindName("PART_Popup", combo) is System.Windows.Controls.Primitives.Popup popup
+                && popup.Child is System.Windows.DependencyObject child)
+            {
+                CollectVisuals(child, popupItems);
+            }
+
+            report.AppendLine($"[弹出层] 选项 {popupItems.Count} 个"
+                              + (popupItems.Count > 0
+                                  ? "，宽度：" + string.Join("／", popupItems.Select(o => $"{o.ActualWidth:0}"))
+                                  : ""));
+            if (popupItems.Count >= 2)
+            {
+                var target = popupItems[1];
+                report.AppendLine($"[第二项] 「{target.Content}」尺寸 {target.ActualWidth:0}x{target.ActualHeight:0}");
+
+                // 点在第二项正中间（文字区域）。
+                ClickAt(target.PointToScreen(new Point(target.ActualWidth / 2, target.ActualHeight / 2)));
+                var changed = string.Equals(account.Server, ServerOptions.Liantong, StringComparison.Ordinal);
+                report.AppendLine($"[点击第二项] 账号区服=「{account.Server}」　期望「{ServerOptions.Liantong}」"
+                                  + $" {(changed ? "[OK]" : "[FAIL]")}");
+                if (!changed)
+                {
+                    failures++;
+                    failuresReport.Add("点了第二项但区服没变，可能弹层在鼠标抬起前就关了，或点到了空白处");
+                }
+
+                // ③ 再验一次「点右半边」：选项背景只有文字那么宽时，右边是死区。
+                combo.SelectedItem = original;
+                Settle(200);
+                for (var attempt = 0; attempt < 3 && !combo.IsDropDownOpen; attempt++)
+                {
+                    ClickAt(combo.PointToScreen(new Point(combo.ActualWidth / 2, combo.ActualHeight / 2)));
+                    Settle(300);
+                }
+
+                popupItems.Clear();
+                var livePopup = combo.Template.FindName("PART_Popup", combo)
+                    as System.Windows.Controls.Primitives.Popup;
+                if (livePopup?.Child is System.Windows.DependencyObject child2)
+                {
+                    CollectVisuals(child2, popupItems);
+                }
+
+                if (popupItems.Count >= 2)
+                {
+                    var target2 = popupItems[1];
+                    var listWidth = (livePopup?.Child as System.Windows.FrameworkElement)?.ActualWidth ?? 0;
+                    var deadZone = listWidth - target2.ActualWidth;
+                    // 弹出层自己有一圈 1px 边框，量出来差 2～3px 属于正常，这里只揪明显没铺满的情况。
+                    report.AppendLine($"[死区检查] 选中项宽 {target2.ActualWidth:0}，弹出层宽 {listWidth:0}；"
+                                      + (deadZone > 6 ? $"右侧 {deadZone:0}px 是死区（点了不生效）" : "整行都能点"));
+                    if (deadZone > 6)
+                    {
+                        failuresReport.Add("选项行没铺满弹出层宽度，点右侧空白不会选中（看起来就是“点不动”）");
+                    }
+
+                    // 点在文字右边（选项行的空白处）：这里以前是死区，点了不会选中。
+                    ClickAt(target2.PointToScreen(new Point(target2.ActualWidth * 0.75, target2.ActualHeight / 2)));
+                    var rightHit = string.Equals(account.Server, ServerOptions.Liantong, StringComparison.Ordinal);
+                    report.AppendLine($"[点点右侧] 账号区服=「{account.Server}」 {(rightHit ? "[OK]" : "[FAIL] 这一侧点不中")}");
+                    if (!rightHit)
+                    {
+                        failures++;
+                    }
+                }
+            }
+
+            account.Server = original;
+            combo.SelectedItem = original;
+            PumpDispatcher();
+        }
+
+        NativeMethods.SetCursorPos(savedCursor.X, savedCursor.Y);
+
+        report.AppendLine();
+        if (failuresReport.Count > 0)
+        {
+            report.AppendLine("问题清单：");
+            foreach (var line in failuresReport)
+            {
+                report.AppendLine(" - " + line);
+            }
+        }
+
+        report.AppendLine(failures == 0 ? "真实点击全部正常。" : $"发现 {failures} 处问题。");
+
+        var directory = Path.Combine(PathService.UserDir, "debug");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "comboclick.txt");
+        File.WriteAllText(path, report.ToString());
+        services.Log.Info($"真实点击自检完成：{path}", "自检");
+        Console.WriteLine(report.ToString());
+
+        window.Close();
+        Shutdown(failures == 0 ? 0 : 1);
+    }
+
+    /// <summary>在屏幕坐标处用真实鼠标左键点一下。</summary>
+    private void ClickAt(Point screenPoint)
+    {
+        NativeMethods.SetCursorPos((int)Math.Round(screenPoint.X), (int)Math.Round(screenPoint.Y));
+        PumpDispatcher();
+        NativeMethods.mouse_event(0x0002, 0, 0, 0, 0);
+        PumpDispatcher();
+        NativeMethods.mouse_event(0x0004, 0, 0, 0, 0);
+        PumpDispatcher();
+    }
+
+    /// <summary>
+    /// 等界面稳定一会儿：弹出层有淡入动画，动画没跑完时里面的选项还不能点，
+    /// 立刻点击会落到空处，看起来像「点了没反应」。
+    /// </summary>
+    private void Settle(int milliseconds)
+    {
+        for (var i = 0; i < Math.Max(1, milliseconds / 50); i++)
+        {
+            Thread.Sleep(50);
+            PumpDispatcher();
+        }
+    }
+
+    /// <summary>把界面线程上排队的布局/绑定任务跑完，再继续断言。</summary>
+    private void PumpDispatcher()
+        => Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+
+    /// <summary>把一个可视化树里所有 T 类型控件收集出来。</summary>
+    private static void CollectVisuals<T>(System.Windows.DependencyObject root, List<T> result)
+        where T : System.Windows.DependencyObject
+    {
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T typed)
+            {
+                result.Add(typed);
+            }
+
+            CollectVisuals(child, result);
+        }
+    }
+
+    /// <summary>判断 element 是否在 ancestor 的可视子树里（用来确认点击落点归不归这个控件管）。</summary>
+    private static bool IsDescendantOf(System.Windows.DependencyObject? ancestor,
+        System.Windows.DependencyObject? element)
+    {
+        if (ancestor == null || element == null)
+        {
+            return false;
+        }
+
+        var node = element;
+        while (node != null)
+        {
+            if (ReferenceEquals(node, ancestor))
+            {
+                return true;
+            }
+
+            node = System.Windows.Media.VisualTreeHelper.GetParent(node);
+        }
+
+        return false;
+    }
+
+    /// <summary>数一数下拉弹出层里真正生成出来的选项个数。</summary>
+    private static int CountPopupItems(System.Windows.Controls.ComboBox combo)
+    {
+        if (combo.Template.FindName("PART_Popup", combo) is not System.Windows.Controls.Primitives.Popup popup)
+        {
+            return -1;
+        }
+
+        if (popup.Child is not System.Windows.DependencyObject child)
+        {
+            return 0;
+        }
+
+        var items = new List<System.Windows.Controls.ComboBoxItem>();
+        CollectVisuals(child, items);
+        return items.Count;
     }
 
     /// <summary>
@@ -353,6 +878,81 @@ public partial class App : Application
             : $"{failures} 个用例不符合预期。");
 
         var outPath = Path.Combine(directory, "resolutioncheck.txt");
+        File.WriteAllText(outPath, report.ToString());
+        Console.WriteLine(report.ToString());
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 区服自检：验证「区服」下拉的取值与旧写法归一化规则。
+    /// 账号页那一列是下拉框，只认 电信区／联通区／电信2区，历史数据里的
+    /// 电信／电一／电二／联通／网通 都要能自动折成这三项。
+    /// 用法：QQSpeedAssistant.exe --servercheck（报告写进 User/debug/servercheck.txt）。
+    /// </summary>
+    private static int RunServerCheck()
+    {
+        var directory = Path.Combine(PathService.UserDir, "debug");
+        Directory.CreateDirectory(directory);
+
+        var report = new System.Text.StringBuilder();
+        report.AppendLine("区服自检：下拉选项 = " + string.Join(" ／ ", Models.ServerOptions.All));
+        report.AppendLine();
+
+        var failures = 0;
+        void Normalize(string label, string? input, string expected)
+        {
+            var actual = Models.ServerOptions.Normalize(input);
+            var pass = string.Equals(actual, expected, StringComparison.Ordinal);
+            if (!pass)
+            {
+                failures++;
+            }
+
+            report.AppendLine($"{(pass ? "[OK]" : "[FAIL]")} {label,-26} 「{input}」 → 「{actual}」 期望「{expected}」");
+        }
+
+        Normalize("实测旧数据", "联通", Models.ServerOptions.Liantong);
+        Normalize("标准写法原样", Models.ServerOptions.Liantong, Models.ServerOptions.Liantong);
+        Normalize("电信", "电信", Models.ServerOptions.Dianxin);
+        Normalize("电一", "电一", Models.ServerOptions.Dianxin);
+        Normalize("电1", "电1", Models.ServerOptions.Dianxin);
+        Normalize("电二", "电二", Models.ServerOptions.Dianxin2);
+        Normalize("电信二区", "电信二区", Models.ServerOptions.Dianxin2);
+        Normalize("电信2区", "电信2区", Models.ServerOptions.Dianxin2);
+        Normalize("网通", "网通", Models.ServerOptions.Liantong);
+        Normalize("带空格", "  联通  ", Models.ServerOptions.Liantong);
+        Normalize("空字符串", "", "");
+        Normalize("null", null, "");
+        Normalize("无法识别", "移动区", "移动区");
+
+        report.AppendLine();
+        report.AppendLine("二、哪些值算下拉里的合法项");
+
+        void Known(string label, string? input, bool expected)
+        {
+            var actual = Models.ServerOptions.IsKnown(input);
+            var pass = actual == expected;
+            if (!pass)
+            {
+                failures++;
+            }
+
+            report.AppendLine($"{(pass ? "[OK]" : "[FAIL]")} {label,-26} 「{input}」 期望={expected} 实际={actual}");
+        }
+
+        Known("电信区", Models.ServerOptions.Dianxin, true);
+        Known("联通区", Models.ServerOptions.Liantong, true);
+        Known("电信2区", Models.ServerOptions.Dianxin2, true);
+        Known("旧写法「联通」", "联通", false);
+        Known("空值", "", false);
+        Known("null", null, false);
+
+        report.AppendLine();
+        report.AppendLine(failures == 0
+            ? "全部通过：旧写法都能折成下拉里的三项，无法识别的值按原样返回（导入时会提示并归到默认区服）。"
+            : $"{failures} 个用例不符合预期。");
+
+        var outPath = Path.Combine(directory, "servercheck.txt");
         File.WriteAllText(outPath, report.ToString());
         Console.WriteLine(report.ToString());
         return failures == 0 ? 0 : 1;

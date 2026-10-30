@@ -12,7 +12,7 @@
             <Border Style="{StaticResource Card}" Margin="0,18,0,14">
                 <StackPanel>
                     <TextBlock Text="批量导入" Style="{StaticResource SectionTitle}" />
-                    <TextBlock Text="每行一个账号，示例：2139444541----ds111200----电信（也支持制表符或逗号分隔，已存在的账号会更新密码与区服）"
+                    <TextBlock Text="每行一个账号，示例：2139444541----ds111200----电信区（也支持制表符或逗号分隔；区服只认电信区／联通区／电信2区，写「电信」「联通」「网通」会自动换算）"
                                Style="{StaticResource Muted}" />
                     <TextBox Text="{Binding ImportText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              Height="112"
@@ -94,9 +94,12 @@
                                                  Text="{Binding Password, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                                  Margin="0,0,8,0"
                                                  FontFamily="Consolas" />
-                                        <TextBox Grid.Column="3"
-                                                 Text="{Binding Server, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                                 Margin="0,0,8,0" />
+                                        <ComboBox Grid.Column="3"
+                                                  Margin="0,0,8,0"
+                                                  ItemsSource="{Binding DataContext.ServerChoices, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                  SelectedItem="{Binding Server, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  ItemContainerStyle="{StaticResource ComboItem}"
+                                                  ToolTip="区服只能是电信区／联通区／电信2区" />
 
                                         <TextBlock Grid.Column="4"
                                                    Text="{Binding StatusText, Mode=OneWay}"

@@ -233,6 +233,8 @@
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                 <Setter Property="Padding" Value="10,6" />
                 <Setter Property="FontSize" Value="12.5" />
+                <!-- 选项行要铺满弹出层宽度，否则右边那几像素点上去没反应 -->
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ComboBoxItem">
@@ -278,15 +280,25 @@
                                         CornerRadius="7"
                                         SnapsToDevicePixels="True" />
 
+                                <!--
+                                    这个 ToggleButton 就是「点开下拉」的热区。
+                                    必须显式写 Stretch：它的模板根是空 Border，DesiredSize 是 0，
+                                    不写 Stretch 会被排成 0x0，鼠标点上去落到外层边框上，
+                                    表现就是「下拉框怎么点都没反应」（展开全靠代码时才发现不了）。
+                                -->
                                 <ToggleButton x:Name="DropDownToggle"
                                               Background="Transparent"
                                               BorderThickness="0"
                                               ClickMode="Press"
                                               Focusable="False"
+                                              HorizontalAlignment="Stretch"
+                                              VerticalAlignment="Stretch"
                                               IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                     <ToggleButton.Template>
                                         <ControlTemplate TargetType="ToggleButton">
-                                            <Border Background="Transparent" />
+                                            <Border Background="Transparent"
+                                                    HorizontalAlignment="Stretch"
+                                                    VerticalAlignment="Stretch" />
                                         </ControlTemplate>
                                     </ToggleButton.Template>
                                 </ToggleButton>

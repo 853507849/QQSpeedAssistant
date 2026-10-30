@@ -39,11 +39,20 @@ public static class AccountTextParser
 
             var account = parts[0];
             var password = parts[1];
-            var server = parts.Length > 2 ? parts[2] : "";
+            var server = ServerOptions.Normalize(parts.Length > 2 ? parts[2] : "");
             if (account.Length == 0 || password.Length == 0)
             {
                 errors.Add($"第 {index + 1} 行账号或密码为空：{line}");
                 continue;
+            }
+
+            // 区服是下拉框，只认三个标准值；写了别的（比如「移动区」）按默认区服导入并提示，
+            // 否则界面上那一格会显示成空白，看起来像没填。
+            if (server.Length > 0 && !ServerOptions.IsKnown(server))
+            {
+                errors.Add($"第 {index + 1} 行区服「{parts[2]}」不在选项（{string.Join("／", ServerOptions.All)}）里，"
+                           + $"已按「{ServerOptions.Default}」导入：{line}");
+                server = ServerOptions.Default;
             }
 
             accounts.Add(new AccountEntry
