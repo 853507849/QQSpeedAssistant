@@ -100,6 +100,20 @@ public partial class App : Application
                 return;
             }
 
+            // 抓图自检：用 BitBlt 抓一次当前前台窗口，确认这台机器上屏幕拷贝可用
+            if (e.Args.Contains("--screencheck"))
+            {
+                Shutdown(RunScreenCheck(e.Args));
+                return;
+            }
+
+            // 验证码自检：切图＋调用视觉模型，报告写进 User/debug/captchacheck.txt
+            if (e.Args.Contains("--captchacheck"))
+            {
+                RunCaptchaCheck(_services, e.Args);
+                return;
+            }
+
             // 匹配自检：拿一张截图把 templates 里所有模板跑一遍多尺度匹配，报告最佳分数与缩放比
             if (e.Args.Contains("--matchcheck"))
             {
@@ -959,12 +973,138 @@ public partial class App : Application
     }
 
     /// <summary>
+    /// 抓图自检：用 BitBlt 把指定窗口（默认前台窗口）拷下来，报告尺寸、颜色种类并存图。
+    /// 验证码的屏幕拷贝走的就是这条链路，换机器或换缩放比例后跑一次即可确认能抓。
+    /// 用法：QQSpeedAssistant.exe --screencheck [窗口标题关键字]
+    /// </summary>
+    private static int RunScreenCheck(string[] args)
+    {
+        var directory = Path.Combine(PathService.UserDir, "debug");
+        Directory.CreateDirectory(directory);
+
+        var report = new System.Text.StringBuilder();
+        var index = Array.IndexOf(args, "--screencheck");
+        var keyword = index >= 0 && index + 1 < args.Length && !args[index + 1].StartsWith("--")
+            ? args[index + 1]
+            : "";
+
+        var handle = nint.Zero;
+        if (keyword.Length == 0)
+        {
+            handle = NativeMethods.GetForegroundWindow();
+        }
+        else
+        {
+            NativeMethods.EnumWindows((hWnd, _) =>
+            {
+                if (!NativeMethods.IsWindowVisible(hWnd))
+                {
+                    return true;
+                }
+
+                if (!NativeMethods.GetWindowTitle(hWnd).Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                handle = hWnd;
+                return false;
+            }, nint.Zero);
+        }
+
+        if (handle == nint.Zero || !NativeMethods.GetWindowRect(handle, out var rect))
+        {
+            report.AppendLine(keyword.Length == 0 ? "取不到前台窗口。" : $"没有找到标题含「{keyword}」的窗口。");
+            File.WriteAllText(Path.Combine(directory, "screencheck.txt"), report.ToString());
+            return 1;
+        }
+
+        var window = new CaptchaWindowInfo(handle, NativeMethods.GetWindowTitle(handle), rect.Left, rect.Top,
+            rect.Width, rect.Height);
+        report.AppendLine($"窗口「{window.Title}」 {window.Width}x{window.Height} @({window.Left},{window.Top})");
+        report.AppendLine($"虚拟桌面 {NativeMethods.VirtualScreenWidth}x{NativeMethods.VirtualScreenHeight}");
+
+        // 窗口一部分在屏幕外时，屏幕拷贝拿到的那些像素必然是全黑，先提示出来，别误判成抓图坏了。
+        var offscreen = window.Left < 0 || window.Top < 0
+            || window.Left + window.Width > NativeMethods.VirtualScreenWidth
+            || window.Top + window.Height > NativeMethods.VirtualScreenHeight;
+        if (offscreen)
+        {
+            report.AppendLine("注意：窗口有部分在屏幕外，屏幕拷贝在那一块只能是黑的。");
+        }
+
+        using var image = CaptchaWindowLocator.CaptureByScreen(window, null);
+        if (image == null || image.Empty())
+        {
+            report.AppendLine("屏幕拷贝失败：BitBlt 返回空。");
+            File.WriteAllText(Path.Combine(directory, "screencheck.txt"), report.ToString());
+            return 1;
+        }
+
+        // 全黑或只有一两种颜色，说明拷到了空 DC，屏幕拷贝在这台机器上不可用。
+        using var small = new OpenCvSharp.Mat();
+        OpenCvSharp.Cv2.Resize(image, small, new OpenCvSharp.Size(160, 100), 0, 0,
+            OpenCvSharp.InterpolationFlags.Area);
+        var colors = new HashSet<string>();
+        for (var y = 0; y < small.Height; y++)
+        {
+            for (var x = 0; x < small.Width; x++)
+            {
+                var p = small.At<OpenCvSharp.Vec3b>(y, x);
+                colors.Add($"{p.Item0},{p.Item1},{p.Item2}");
+            }
+        }
+
+        report.AppendLine($"抓到 {image.Width}x{image.Height}，缩略后颜色种类 {colors.Count}");
+        var answer = colors.Count >= 8
+            ? "屏幕拷贝可用（内容正常）。"
+            : "屏幕拷贝拿到的画面几乎是纯色，这台机器上需要依赖 PrintWindow 兜底。";
+        report.AppendLine(answer);
+
+        var outPath = Path.Combine(directory, "screencheck.png");
+        OpenCvSharp.Cv2.ImWrite(outPath, image);
+        report.AppendLine($"截图：{outPath}");
+
+        var txtPath = Path.Combine(directory, "screencheck.txt");
+        File.WriteAllText(txtPath, report.ToString());
+        Console.WriteLine(report.ToString());
+        return colors.Count >= 8 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 验证码自检：把验证码弹窗（或指定截图）切图、标注、调用视觉模型，全程写进 User/debug/captchacheck.txt。
+    /// 用法：
+    ///   --captchacheck                 抓当前弹窗，只切图＋识别，不点击；
+    ///   --captchacheck --image a.png   离线跑一张截图（没有弹窗时也能验证切图与提示词）；
+    ///   --captchacheck --solve         真的把识别结果点下去。
+    /// </summary>
+    private void RunCaptchaCheck(AppServices services, string[] args)
+    {
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            var directory = Path.Combine(PathService.UserDir, "debug");
+            Directory.CreateDirectory(directory);
+
+            var index = Array.IndexOf(args, "--image");
+            var imagePath = index >= 0 && index + 1 < args.Length && !args[index + 1].StartsWith("--")
+                ? args[index + 1]
+                : null;
+
+            var result = await CaptchaSelfCheck.RunAsync(services.Config.Settings, services.Log, imagePath,
+                args.Contains("--solve"), CancellationToken.None);
+
+            File.WriteAllText(Path.Combine(directory, "captchacheck.txt"), result.Report);
+            Console.WriteLine(result.Report);
+            Shutdown(result.ExitCode);
+        });
+    }
+
+    /// <summary>
     /// 输入判定自检：用合成画面验证「框里到底有没有输入」的判定规则，
     /// 四种典型情形（空框、只有光标、只有边框高亮、真打进圆点/数字）各跑一遍。
     /// 用法：QQSpeedAssistant.exe --inkcheck（不用开游戏，报告写进 User/debug/inkcheck.txt）。
     /// </summary>
-    private static void RunInkCheck()
-    {
+    private static void RunInkCheck()    {
         var directory = Path.Combine(PathService.UserDir, "debug");
         Directory.CreateDirectory(directory);
 

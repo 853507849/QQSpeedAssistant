@@ -124,6 +124,39 @@ public static class NativeMethods
     private const uint SWP_NOZORDER = 0x0004;
     private const uint SWP_NOACTIVATE = 0x0010;
 
+    // ── 屏幕抓图（GDI）─────────────────────────────────────────────
+    // 不用 Graphics.CopyFromScreen：它会把 copyPixelOperation 交给 Enum 校验，
+    // 传 SourceCopy|CaptureBlt 这种组合会抛「invalid for Enum type CopyPixelOperation」。
+    // 直接 BitBlt，Rop 是纯位掩码，没有这层校验。
+
+    /// <summary>SRCCOPY|CAPTUREBLT：连同分层窗口一起拷进来。</summary>
+    public const uint SrcCopyCaptureBlt = 0x00CC0020 | 0x40000000;
+
+    [DllImport("user32.dll")]
+    public static extern nint GetDC(nint hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern int ReleaseDC(nint hWnd, nint hDC);
+
+    [DllImport("gdi32.dll")]
+    public static extern nint CreateCompatibleDC(nint hdc);
+
+    [DllImport("gdi32.dll")]
+    public static extern nint CreateCompatibleBitmap(nint hdc, int width, int height);
+
+    [DllImport("gdi32.dll")]
+    public static extern nint SelectObject(nint hdc, nint hObject);
+
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteObject(nint hObject);
+
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteDC(nint hdc);
+
+    [DllImport("gdi32.dll")]
+    public static extern bool BitBlt(nint destDc, int x, int y, int width, int height, nint srcDc, int srcX,
+        int srcY, uint rop);
+
     /// <summary>
     /// 把窗口「客户区」调整到指定像素尺寸（左上角位置不变），返回调整后是否真的达到目标尺寸。
     /// 模板都按固定的客户区尺寸采集，运行时也把窗口调成同一尺寸，坐标才能一一对应。
@@ -298,6 +331,21 @@ public static class NativeMethods
 
     /// <summary>虚拟桌面高度（所有显示器合并）。</summary>
     public static int VirtualScreenHeight => Math.Max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+
+    /// <summary>把窗口成画到指定 DC（含非客户区）。</summary>
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(nint hWnd, nint hdcBlt, uint flags);
+
+    /// <summary>PrintWindow 的 PW_RENDERFULLCONTENT：CEF／Electron 这类自绘窗口必须带这个标志才会画出内容。</summary>
+    public const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    /// <summary>按下并抬起鼠标左键（屏幕坐标由 SetCursorPos 事先定位）。</summary>
+    public static void ClickLeftButton()
+    {
+        mouse_event(0x0002, 0, 0, 0, nint.Zero); // LEFTDOWN
+        Thread.Sleep(20);
+        mouse_event(0x0004, 0, 0, 0, nint.Zero); // LEFTUP
+    }
 
     /// <summary>
     /// 把屏幕物理坐标换算成 SendInput／Interception 要求的 0..65535 归一化值。

@@ -221,6 +221,10 @@ public sealed partial class SettingsPageViewModel : ObservableObject
     [RelayCommand]
     private void OpenUserFolder() => OpenFolder(PathService.UserDir);
 
+    /// <summary>打开 AI 调用日志目录：每次模型请求的完整请求与返回都在这里。</summary>
+    [RelayCommand]
+    private void OpenAiLogFolder() => OpenFolder(AiRequestLogger.LogDir);
+
     /// <summary>打开流程目录。</summary>
     [RelayCommand]
     private void OpenFlowFolder() => OpenFolder(PathService.FlowDir);
@@ -234,10 +238,43 @@ public sealed partial class SettingsPageViewModel : ObservableObject
     private void CancelShutdown() => _services.Shutdown.Cancel();
 
     /// <summary>
+    /// 测试验证码识别：先让验证码弹出来，再点这个按钮，程序会抓图、切图、调模型，
+    /// 并把结论和标注图写进 User/debug，用来确认密钥、模型名和提示词是否可用。
+    /// </summary>
+    [RelayCommand]
+    private async Task TestCaptchaAsync()
+    {
+        StatusMessage = "验证码自检中…（请先让验证码弹出来）";
+        var result = await Task.Run(() =>
+            CaptchaSelfCheck.RunAsync(Settings, _services.Log, null, false, CancellationToken.None));
+
+        try
+        {
+            var directory = Path.Combine(PathService.UserDir, "debug");
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "captchacheck.txt"), result.Report);
+        }
+        catch (Exception ex)
+        {
+            _services.Log.Warn($"写验证码自检报告失败：{ex.Message}", "验证码");
+        }
+
+        StatusMessage = result.ExitCode == 0
+            ? "验证码自检通过：切图与识别都正常（详情见 User/debug/captchacheck.txt）"
+            : "验证码自检未通过：原因见 User/debug/captchacheck.txt";
+    }
+
+    /// <summary>
     /// 设置项变化：自动保存；开机自启是注册表操作，需要立刻同步，不能只改配置文件。
     /// </summary>
     private void OnSettingChanged(string? propertyName)
     {
+        // 日志开关是静态字段，改了要立刻生效，不能等下次启动读配置。
+        if (propertyName == nameof(AppSettings.AiRequestLogEnabled))
+        {
+            AiRequestLogger.Enabled = Settings.AiRequestLogEnabled;
+        }
+
         if (propertyName == nameof(AppSettings.AutoStartWithWindows))
         {
             var ok = _services.AutoStart.Apply(Settings.AutoStartWithWindows);

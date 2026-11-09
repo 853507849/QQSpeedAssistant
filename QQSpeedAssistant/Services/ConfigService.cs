@@ -42,6 +42,9 @@ public sealed class ConfigService
     {
         Settings = Read<AppSettings>(PathService.SettingsFile) ?? new AppSettings();
 
+        // 日志开关从配置里读回来，不跟着走的话界面上关掉也照样记。
+        AiRequestLogger.Enabled = Settings.AiRequestLogEnabled;
+
         var accounts = Read<List<AccountEntry>>(PathService.AccountsFile) ?? [];
         Accounts.Clear();
         var order = 1;

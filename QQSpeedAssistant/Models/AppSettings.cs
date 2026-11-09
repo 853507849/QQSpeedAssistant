@@ -184,4 +184,59 @@ public sealed partial class AppSettings : ObservableObject
     /// <summary>票完动作生效前的等待秒数，留出取消时间。</summary>
     [ObservableProperty]
     private int _finishActionDelaySeconds = 20;
+
+    // ───────────────────────── 登录验证码（自动过码） ─────────────────────────
+
+    /// <summary>
+    /// 登录弹出「QQ安全中心」图片验证码时，是否自动识别并点选。
+    /// 关闭或没有配置密钥／识别失败时，改为等待人工完成，不会直接跳过这个账号。
+    /// </summary>
+    [ObservableProperty]
+    private bool _autoCaptchaEnabled = true;
+
+    /// <summary>
+    /// 验证码识别接口地址（OpenAI 兼容的 /chat/completions 服务，本地 Ollama 也填这个格式）。
+    /// 默认用智谱开放平台的 GLM-4.6V-Flash，长期免费、128K 上下文，注册后拿 Key 即可用。
+    /// </summary>
+    [ObservableProperty]
+    private string _captchaApiBaseUrl = "https://open.bigmodel.cn/api/paas/v4";
+
+    /// <summary>验证码识别接口密钥（Bearer）。留空则只做人工等待。</summary>
+    [ObservableProperty]
+    private string _captchaApiKey = "";
+
+    /// <summary>
+    /// 验证码识别模型名，必须是支持图片输入的模型。
+    /// glm-4.6v-flash 完全免费；换其他家时按平台的模型 ID 改这里。
+    /// </summary>
+    [ObservableProperty]
+    private string _captchaModel = "glm-4.6v-flash";
+
+    /// <summary>
+    /// 主模型被限流（429）时改用的备用模型，留空表示不降级。
+    /// 智谱的免费模型各自独立配额，glm-4.6v-flash 打满时 glm-4v-flash 往往还有余量。
+    /// 换成其他平台时记得把它清空或改成该平台的模型。
+    /// </summary>
+    [ObservableProperty]
+    private string _captchaFallbackModel = "glm-4v-flash";
+
+    /// <summary>同一张验证码最多作答几次（答错会换一张图，重新识别）。</summary>
+    [ObservableProperty]
+    private int _captchaMaxAttempts = 3;
+
+    /// <summary>没配密钥或识别失败时，等待人工完成验证码的秒数。</summary>
+    [ObservableProperty]
+    private int _captchaManualWaitSeconds = 180;
+
+    /// <summary>验证码窗口标题关键字，多个用竖线分隔。</summary>
+    [ObservableProperty]
+    private string _captchaWindowTitles = "QQ安全中心|安全中心|安全验证|验证码";
+
+    /// <summary>
+    /// 是否记录 AI 调用日志。开启后每一次模型请求（含失败、限流、重试）都会单独写一节到
+    /// User/log/ai/ai-yyyyMMdd.log，内容包括完整请求体、完整响应体、状态码与耗时；
+    /// 请求里带的图片另存到 User/log/ai/media/（日志保留 14 天，图片 7 天）。
+    /// </summary>
+    [ObservableProperty]
+    private bool _aiRequestLogEnabled = true;
 }

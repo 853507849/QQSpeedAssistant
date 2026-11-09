@@ -21,18 +21,27 @@ public sealed record LoginResult(bool Success, AccountRunStatus Status, string M
 /// </summary>
 public sealed class AccountLoginService
 {
+    /// <summary>
+    /// 登录流程跑完后，最多再等这么久来确认真的进了大厅（秒）。
+    /// 正常情况下大厅模板一命中就立刻返回，不会等满；只有卡在登录界面/验证码时才会用到这里。
+    /// </summary>
+    private const int CaptchaSettleSeconds = 40;
+
     private readonly FlowLoader _flows;
     private readonly FlowRunner _runner;
     private readonly TemplateMatcher _matcher;
     private readonly LogService _log;
+    private readonly CaptchaService _captcha;
 
     /// <summary>构造登录服务。</summary>
-    public AccountLoginService(FlowLoader flows, FlowRunner runner, TemplateMatcher matcher, LogService log)
+    public AccountLoginService(FlowLoader flows, FlowRunner runner, TemplateMatcher matcher, LogService log,
+        CaptchaService captcha)
     {
         _flows = flows;
         _runner = runner;
         _matcher = matcher;
         _log = log;
+        _captcha = captcha;
     }
 
     /// <summary>登录指定账号到指定会话。</summary>
@@ -74,7 +83,7 @@ public sealed class AccountLoginService
         }
 
         // 通道二：UIA 直接填表
-        if (await TryUiaLoginAsync(session, account, ct))
+        if (await TryUiaLoginAsync(session, account, settings, ct))
         {
             session.MarkLoggedIn();
             _log.Success("登录成功（UIA 直接填表，未使用鼠标键盘）", account.Account);
@@ -91,73 +100,183 @@ public sealed class AccountLoginService
         }
 
         var maxRetries = Math.Clamp(settings.MaxPasswordRetries, 0, 10);
+        var captchaLimit = Math.Clamp(settings.CaptchaMaxAttempts, 1, 6);
         var freezeCount = 0;
         var envAbnormalCount = 0;
+        var captchaRecoveries = 0;
+        var attempt = 1;
 
-        for (var attempt = 1; attempt <= maxRetries + 1; attempt++)
+        while (attempt <= maxRetries + 1)
         {
             ct.ThrowIfCancellationRequested();
             var context = new FlowContext { Account = account, ModeId = "login" };
             context.Variables["server"] = server;
+
+            FlowException? error = null;
             try
             {
                 _log.Info($"开始登录（第 {attempt} 次）", account.Account);
                 await _runner.ExecuteAsync(flow, session, context, ct);
+
+                // 流程跑完 ≠ 真进游戏了。QQ 的验证码是点登录之后异步弹的（实测能晚二十多秒），
+                // 弹窗盖在画面上时，流程里「等登录按钮消失」「等大厅」这些步骤只会一路对不上但仍继续，
+                // 最后照样返回成功 —— 后面玩法的模板全 0 相似度就是这么来的。
+                // 所以补一段收尾确认：一边等大厅画面，一边接住这期间弹出的验证码。
+                var pending = await WaitForHallOrCaptchaAsync(session, account, settings, ct);
+
+                if (pending == CaptchaOutcome.TimedOut)
+                {
+                    _log.Error("验证码未通过（人工等待超时），本次登录判失败", account.Account);
+                    return LoginResult.Fail(AccountRunStatus.Captcha, "验证码未通过");
+                }
+
+                if (pending is CaptchaOutcome.Solved or CaptchaOutcome.ManualSolved)
+                {
+                    _log.Success("登录后的验证码已通过", account.Account);
+                    // 过码时验证码窗口抢走了前台焦点，拿回来再继续。
+                    session.Activate();
+                }
+
                 session.MarkLoggedIn();
                 _log.Success("登录成功", account.Account);
                 session.EnsureGameClientSize();
                 return LoginResult.Ok();
             }
-            catch (FlowException ex) when (ex.Reason == FlowFailReasons.WrongPassword)
+            catch (OperationCanceledException)
             {
-                if (attempt > maxRetries)
-                {
-                    _log.Error($"密码错误已达 {attempt} 次，切换到下一个账号", account.Account);
-                    return LoginResult.Fail(AccountRunStatus.PasswordFailed, $"密码错误 {attempt} 次");
-                }
-
-                _log.Warn($"密码错误，{Math.Max(1, 2)} 秒后重试（{attempt}/{maxRetries + 1}）", account.Account);
-                await Task.Delay(2000, ct);
-            }
-            catch (FlowException ex) when (ex.Reason == FlowFailReasons.Frozen)
-            {
-                freezeCount++;
-                var threshold = Math.Max(1, settings.FreezeSwapThreshold);
-                if (freezeCount >= threshold)
-                {
-                    _log.Error($"冻结提示已出现 {freezeCount} 次，切换到下一个账号", account.Account);
-                    return LoginResult.Fail(AccountRunStatus.Frozen, $"账号冻结（提示 {freezeCount} 次）");
-                }
-
-                _log.Warn($"出现冻结提示（{freezeCount}/{threshold}），等待后重试", account.Account);
-                await Task.Delay(TimeSpan.FromSeconds(Math.Max(5, settings.TopUpDelaySeconds)), ct);
-            }
-            catch (FlowException ex) when (ex.Reason == FlowFailReasons.Captcha)
-            {
-                _log.Error("登录需要验证码，本程序不会自动过码，切换到下一个账号", account.Account);
-                return LoginResult.Fail(AccountRunStatus.Captcha, "验证码拦截");
-            }
-            catch (FlowException ex) when (ex.Reason == FlowFailReasons.EnvAbnormal)
-            {
-                envAbnormalCount++;
-                var threshold = Math.Max(1, settings.EnvAbnormalSwapThreshold);
-                if (envAbnormalCount >= threshold)
-                {
-                    _log.Error($"环境异常提示已出现 {envAbnormalCount} 次，切换到下一个账号（建议改用快速登录）", account.Account);
-                    return LoginResult.Fail(AccountRunStatus.EnvAbnormal, $"环境异常（提示 {envAbnormalCount} 次）");
-                }
-
-                _log.Warn($"环境异常提示（{envAbnormalCount}/{threshold}），等待后重试；建议开启快速登录", account.Account);
-                await Task.Delay(TimeSpan.FromSeconds(Math.Max(5, settings.TopUpDelaySeconds)), ct);
+                throw;
             }
             catch (FlowException ex)
             {
-                _log.Error($"登录流程失败：{ex.Message}", account.Account);
-                return LoginResult.Fail(AccountRunStatus.LoginTimeout, ex.Message);
+                error = ex;
+            }
+
+            // 验证码弹窗盖在游戏上面时，后面的模板全对不上，流程会以各种理由报错。
+            // 所以先查有没有验证码：处理掉了就原地重来，这一次不算密码重试次数。
+            if (captchaRecoveries < captchaLimit)
+            {
+                var outcome = await TryHandleCaptchaAsync(settings, account.Account, ct, 2500);
+                if (outcome is CaptchaOutcome.Solved or CaptchaOutcome.ManualSolved)
+                {
+                    captchaRecoveries++;
+                    _log.Info($"验证码已通过，重新执行登录流程（{captchaRecoveries}/{captchaLimit}）", account.Account);
+                    continue;
+                }
+
+                if (outcome == CaptchaOutcome.TimedOut)
+                {
+                    _log.Error("验证码未通过（人工等待超时），切换到下一个账号", account.Account);
+                    return LoginResult.Fail(AccountRunStatus.Captcha, "验证码未通过");
+                }
+            }
+
+            switch (error!.Reason)
+            {
+                case FlowFailReasons.WrongPassword:
+                    if (attempt > maxRetries)
+                    {
+                        _log.Error($"密码错误已达 {attempt} 次，切换到下一个账号", account.Account);
+                        return LoginResult.Fail(AccountRunStatus.PasswordFailed, $"密码错误 {attempt} 次");
+                    }
+
+                    _log.Warn($"密码错误，2 秒后重试（{attempt}/{maxRetries + 1}）", account.Account);
+                    await Task.Delay(2000, ct);
+                    attempt++;
+                    break;
+
+                case FlowFailReasons.Frozen:
+                    freezeCount++;
+                    var freezeThreshold = Math.Max(1, settings.FreezeSwapThreshold);
+                    if (freezeCount >= freezeThreshold)
+                    {
+                        _log.Error($"冻结提示已出现 {freezeCount} 次，切换到下一个账号", account.Account);
+                        return LoginResult.Fail(AccountRunStatus.Frozen, $"账号冻结（提示 {freezeCount} 次）");
+                    }
+
+                    _log.Warn($"出现冻结提示（{freezeCount}/{freezeThreshold}），等待后重试", account.Account);
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Max(5, settings.TopUpDelaySeconds)), ct);
+                    attempt++;
+                    break;
+
+                case FlowFailReasons.Captcha:
+                    _log.Error("登录需要验证码且未能自动通过，切换到下一个账号", account.Account);
+                    return LoginResult.Fail(AccountRunStatus.Captcha, "验证码拦截");
+
+                case FlowFailReasons.EnvAbnormal:
+                    envAbnormalCount++;
+                    var envThreshold = Math.Max(1, settings.EnvAbnormalSwapThreshold);
+                    if (envAbnormalCount >= envThreshold)
+                    {
+                        _log.Error($"环境异常提示已出现 {envAbnormalCount} 次，切换到下一个账号（建议改用快速登录）", account.Account);
+                        return LoginResult.Fail(AccountRunStatus.EnvAbnormal, $"环境异常（提示 {envAbnormalCount} 次）");
+                    }
+
+                    _log.Warn($"环境异常提示（{envAbnormalCount}/{envThreshold}），等待后重试；建议开启快速登录", account.Account);
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Max(5, settings.TopUpDelaySeconds)), ct);
+                    attempt++;
+                    break;
+
+                default:
+                    _log.Error($"登录流程失败：{error.Message}", account.Account);
+                    return LoginResult.Fail(AccountRunStatus.LoginTimeout, error.Message);
             }
         }
 
         return LoginResult.Fail(AccountRunStatus.PasswordFailed, "密码错误");
+    }
+
+    /// <summary>检测并处理登录验证码：没有验证码时立即返回 NotPresent（不阻塞流程）。</summary>
+    private Task<CaptchaOutcome> TryHandleCaptchaAsync(AppSettings settings, string account, CancellationToken ct,
+        int detectTimeoutMs)
+        => _captcha.HandleIfPresentAsync(settings, account, ct, detectTimeoutMs);
+
+    /// <summary>
+    /// 登录流程跑完后的收尾确认：一边等大厅画面出现，一边接住这期间异步弹出的验证码。
+    /// 大厅模板命中就立刻返回（正常登录只多抓一帧），不会把每个号都拖慢几十秒；
+    /// 模板不存在时退化成固定观察窗，至少能覆盖大部分异步弹窗。
+    /// </summary>
+    private async Task<CaptchaOutcome> WaitForHallOrCaptchaAsync(GameSession session, AccountEntry account,
+        AppSettings settings, CancellationToken ct)
+    {
+        var hasHallTemplate = _matcher.TemplateExists("hall_main");
+        var deadline = DateTime.UtcNow.AddSeconds(hasHallTemplate ? CaptchaSettleSeconds : 8);
+        var solved = false;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // 有验证码就先处理：弹窗盖在画面上时，大厅判定永远不可能命中。
+            if (CaptchaWindowLocator.Find(settings) != null)
+            {
+                var outcome = await _captcha.HandleIfPresentAsync(settings, account.Account, ct, 1500);
+                if (outcome == CaptchaOutcome.TimedOut)
+                {
+                    return CaptchaOutcome.TimedOut;
+                }
+
+                solved |= outcome is CaptchaOutcome.Solved or CaptchaOutcome.ManualSolved;
+                continue;
+            }
+
+            if (hasHallTemplate)
+            {
+                using var frame = session.CaptureFrame();
+                if (frame != null && !frame.Empty() && _matcher.Find(frame, "hall_main", 0.8).Found)
+                {
+                    return solved ? CaptchaOutcome.Solved : CaptchaOutcome.NotPresent;
+                }
+            }
+
+            await Task.Delay(800, ct);
+        }
+
+        if (hasHallTemplate)
+        {
+            _log.Warn($"{CaptchaSettleSeconds} 秒内没等到大厅画面，可能仍卡在登录界面；先按登录成功继续", account.Account);
+        }
+
+        return solved ? CaptchaOutcome.Solved : CaptchaOutcome.NotPresent;
     }
 
     /// <summary>
@@ -274,7 +393,8 @@ public sealed class AccountLoginService
     /// ③ 两块框各自出现文字且提交前仍在；④ 提交后登录按钮连续多次消失。
     /// 任一关不过就返回 false，交给键鼠流程处理（绝不凭空判定成功）。
     /// </summary>
-    private async Task<bool> TryUiaLoginAsync(GameSession session, AccountEntry account, CancellationToken ct)
+    private async Task<bool> TryUiaLoginAsync(GameSession session, AccountEntry account, AppSettings settings,
+        CancellationToken ct)
     {
         // 先把窗口切到前台：后台窗口抓屏可能拿到过期画面，会让“有没有写进去”判断失真；
         // 而且真实点击与真实按键都要求窗口在前台，否则点击会落到别的窗口上。
@@ -347,7 +467,21 @@ public sealed class AccountLoginService
             return false;
         }
 
-        // ③ 提交后：登录按钮必须连续 2 次匹配不到，才认为界面真的切换了。
+        // ③ 提交后先看有没有验证码：弹窗会盖住登录界面，让「登录按钮消失」的判定彻底失效。
+        var captcha = await TryHandleCaptchaAsync(settings, account.Account, ct, 12000);
+        if (captcha == CaptchaOutcome.TimedOut)
+        {
+            _log.Error("验证码未通过（人工等待超时），本次登录判失败", account.Account);
+            return false;
+        }
+
+        if (captcha is CaptchaOutcome.Solved or CaptchaOutcome.ManualSolved)
+        {
+            // 验证码通过后，把游戏窗口重新拿回前台，后续判定与点击都要求它在最前面。
+            session.Activate();
+        }
+
+        // ④ 提交后：登录按钮必须连续 2 次匹配不到，才认为界面真的切换了。
         var deadline = DateTime.UtcNow.AddSeconds(25);
         var missed = 0;
         while (DateTime.UtcNow < deadline)

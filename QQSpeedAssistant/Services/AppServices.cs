@@ -14,7 +14,8 @@ public sealed class AppServices
         Rewards = new RewardService(Log);
         Runner = new FlowRunner(Matcher, Rewards, Config, Log);
         Sessions = new SessionManager(Config, Log);
-        Login = new AccountLoginService(Flows, Runner, Matcher, Log);
+        Captcha = new CaptchaService(Log);
+        Login = new AccountLoginService(Flows, Runner, Matcher, Log, Captcha);
         Logout = new LogoutService(Flows, Runner, Log);
         ModeExecution = new ModeExecutionService(Flows, Runner, Rewards, Log);
         FrameRate = new FrameRateService(Flows, Runner, Log);
@@ -56,6 +57,9 @@ public sealed class AppServices
 
     /// <summary>登录服务。</summary>
     public AccountLoginService Login { get; }
+
+    /// <summary>登录验证码（自动过码）服务。</summary>
+    public CaptchaService Captcha { get; }
 
     /// <summary>退出登录服务。</summary>
     public LogoutService Logout { get; }
