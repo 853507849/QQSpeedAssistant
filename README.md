@@ -364,6 +364,7 @@ dotnet msbuild QQSpeedAssistant.sln -restore -p:Configuration=Debug -nologo -tl:
 | 现象 | 处理 |
 | --- | --- |
 | VS 提示「无法启动调试。无法启动启动项目」 | 在解决方案资源管理器中右键 `QQSpeedAssistant` 项目 →「设为启动项目」，或直接打开 `QQSpeedAssistant.sln`（主程序已排在解决方案第一位） |
+| VS 报 `CS5001 未能找到元数据文件 …\bin\Debug\…\Fischless.GameCapture.dll` | 两个 Fischless 库原来只声明了 `<Platforms>x64</Platforms>`，VS 会按 x64 输出到 `bin\x64\Debug\`，而解决方案配置是 Any CPU，主项目去 `bin\Debug\` 找 DLL 自然找不到。现已把 `Platforms` 改为 `AnyCPU;x64`；拉的是旧版代码就先改这两行，再删掉三个项目的 `bin`、`obj`，重新生成解决方案 |
 | 双击 exe 没反应或界面一闪而过 | 查看 `User/log/startup-error.txt` 与 `User/log/run-*.log`；多为缺少 .NET 10 桌面运行时 |
 | 能识别画面但点不到按钮 | 以管理员身份运行本程序与客户端，并确认游戏为窗口化 / 无边框模式 |
 | 模板永远是「未找到」 | 先跑 `--matchcheck <截图>` 看分数：分数 ≥0.85 说明模板没问题，是流程／步骤没走到；分数 0.5～0.8 说明框到了会变的内容（数字、倒计时、角色名）或框太大，重新框按钮本体；分数 <0.4 说明画面里确实没有这个东西 |
