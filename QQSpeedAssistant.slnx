@@ -1,5 +1,5 @@
 <Solution>
-  <Project Path="../better-genshin-impact-refactor-20260930/Fischless.GameCapture/Fischless.GameCapture.csproj" />
-  <Project Path="../better-genshin-impact-refactor-20260930/Fischless.WindowsInput/Fischless.WindowsInput.csproj" />
+  <Project Path="Fischless.GameCapture/Fischless.GameCapture.csproj" />
+  <Project Path="Fischless.WindowsInput/Fischless.WindowsInput.csproj" />
   <Project Path="QQSpeedAssistant/QQSpeedAssistant.csproj" />
 </Solution>

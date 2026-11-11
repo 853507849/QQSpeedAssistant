@@ -23,9 +23,9 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<!-- 复用工作区已有的抓屏与键鼠模拟实现，保持技术栈一致 -->
-		<ProjectReference Include="..\..\better-genshin-impact-refactor-20260930\Fischless.GameCapture\Fischless.GameCapture.csproj" />
-		<ProjectReference Include="..\..\better-genshin-impact-refactor-20260930\Fischless.WindowsInput\Fischless.WindowsInput.csproj" />
+		<!-- 内置的抓屏与键鼠模拟实现（源自 BetterGI 的 Fischless 子项目，已随仓库一并提供） -->
+		<ProjectReference Include="..\Fischless.GameCapture\Fischless.GameCapture.csproj" />
+		<ProjectReference Include="..\Fischless.WindowsInput\Fischless.WindowsInput.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

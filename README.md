@@ -1,6 +1,6 @@
 # QQ飞车端游 多账号任务助手
 
-基于工作区同一技术栈实现的端游多账号自动化辅助框架：批量账号登录、按玩法配置局数、多开相互完成任务、奖励截图归档、定时上号与自动关机。
+基于 .NET 10 + WPF 实现的端游多账号自动化辅助框架：批量账号登录、按玩法配置局数、多开相互完成任务、奖励截图归档、定时上号与自动关机。
 
 > **许可与免责**：本软件仅允许个人学习、研究及非商业性使用；禁止任何形式的商业使用（含商业产品集成、企业内部商业运营）。本软件按「原样」提供，不附带任何明示或暗示的担保。完整条款见 [LICENSE](LICENSE)。
 
@@ -8,11 +8,11 @@
 
 > **生成方式**：本项目代码与文档由 **WorkBuddy** 生成，**非人为参与编写**（人工仅提出需求与验收标准）。因此不保证工程质量、不做长期维护承诺，**仅供学习参考与娱乐**，请勿用于任何生产或商业场景，使用风险自负。
 
-> **项目参考**：技术选型与整体思路参考开源项目 **better-genshin-impact**（BetterGI）——包括 .NET + WPF-UI 的界面栈、直接复用其抓屏与键鼠模块 `Fischless.GameCapture` / `Fischless.WindowsInput`、以及「模板匹配 + JSON 流程编排」的自动化框架设计。本项目是针对《QQ飞车端游》独立实现，与 BetterGI 官方无隶属、合作或授权关系。
+> **项目参考**：技术选型与整体思路参考开源项目 **better-genshin-impact**（BetterGI）——包括 .NET + WPF-UI 的界面栈、直接复用其抓屏与键鼠模块 `Fischless.GameCapture` / `Fischless.WindowsInput`（源码已内置到本仓库）、以及「模板匹配 + JSON 流程编排」的自动化框架设计。本项目是针对《QQ飞车端游》独立实现，与 BetterGI 官方无隶属、合作或授权关系。
 
 **功能概览**：号池顶替（同时挂 N 个号，完成即换号顶上）、票完五动作（停止／小化／关机／重启／重爆）、定时下号、开机自启 + 启动即开跑、快速登录（复用 QQ 登录态点头像）、登录前选大区、领奖／开宝箱／永久判定步骤、冻结／验证码／环境异常换号、掉线自动重连、三套预设方案、单号匹配。
 
-- 技术栈：.NET 10（WPF）+ WPF-UI 4.3 + CommunityToolkit.Mvvm 8.2 + OpenCvSharp 4.11 + Newtonsoft.Json；抓屏与键鼠直接复用工作区的 `Fischless.GameCapture` / `Fischless.WindowsInput`。
+- 技术栈：.NET 10（WPF）+ WPF-UI 4.3 + CommunityToolkit.Mvvm 8.2 + OpenCvSharp 4.11 + Newtonsoft.Json；抓屏与键鼠用仓库内置的 `Fischless.GameCapture` / `Fischless.WindowsInput` 两个子项目（源码已随仓库提供，无需外部依赖），`dotnet build QQSpeedAssistant.sln` 一次带上三个项目。
 - 玩法清单：`GameModeCatalog` 收录了《QQ飞车端游现有可玩模式一览》中的全部 41 个模式，含分类、档期、人数要求与游戏内入口路径。
 
 ## 快速开始
@@ -318,19 +318,24 @@ QQSpeedAssistant.exe --screencheck WorkBuddy       # 抓标题含关键字的窗
 ## 项目结构
 
 ```
-QQSpeedAssistant/
-├─ QQSpeedAssistant.sln
-└─ QQSpeedAssistant/
-   ├─ Models/       玩法定义与目录、账号、任务、设置、流程模型
-   ├─ Services/     配置、日志、窗口定位、抓屏会话、模板匹配、流程执行、
-   │                登录（快速登录/UIA/键鼠）、退出、玩法执行、奖励截图、
-│                验证码自动过码（窗口定位/切图/视觉模型/点击）、
-   │                降帧、定时上号下号、关机重启、票完动作、开机自启、
-   │                预设方案、任务编排（号池/顺序）
-   ├─ ViewModels/   主页、账号、玩法任务、运行设置、奖励、日志、模板采集
-   ├─ Views/        MainWindow、6 个页面、模板采集窗口
-   ├─ Converters/   日志级别配色
-   └─ Assets/Flows/ 示例流程（首次运行安装到 flows/，含 14 个白票玩法）
+QQSpeedAssistant/                ← 仓库根，解决方案所在
+├─ QQSpeedAssistant.sln          解决方案（含下面三个项目）
+├─ QQSpeedAssistant/             主程序
+│  ├─ Models/        玩法定义与目录、账号、任务、设置、流程模型
+│  ├─ Services/      配置、日志、窗口定位、抓屏会话、模板匹配、流程执行、
+│  │                 登录（快速登录/UIA/键鼠）、退出、玩法执行、奖励截图、
+│  │                 验证码自动过码（窗口定位/切图/视觉模型/点击）、
+│  │                 降帧、定时上号下号、关机重启、票完动作、开机自启、
+│  │                 预设方案、任务编排（号池/顺序）
+│  ├─ ViewModels/    主页、账号、玩法任务、运行设置、奖励、日志、模板采集
+│  ├─ Views/         MainWindow、6 个页面、模板采集窗口
+│  ├─ Converters/    日志级别配色
+│  └─ Assets/Flows/  示例流程（首次运行安装到 flows/，含 14 个白票玩法）
+├─ Fischless.GameCapture/        抓屏库（BitBlt / Windows.Graphics.Capture / DwmSharedSurface，源自 BetterGI）
+├─ Fischless.WindowsInput/       键鼠模拟库（SendInput 封装，源自 BetterGI）
+├─ tools/Interception/           Interception 驱动级输入的原生 DLL（x64 / x86）
+├─ docs/                         文档与界面预览图
+└─ LICENSE
 ```
 
 ## 已知限制与注意
