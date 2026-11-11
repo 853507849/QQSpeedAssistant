@@ -8,8 +8,9 @@ namespace QQSpeedAssistant.Services;
 public sealed record CaptchaCheckResult(int ExitCode, string Report, string AnnotatedPath);
 
 /// <summary>
-/// 验证码自检：抓当前弹窗（或读一张截图）→ 切图 → 标注 → 调模型，把每一步写进报告。
-/// 命令行（--captchacheck）和设置页的「测试识别」按钮共用这一套逻辑，保证两边结论一致。
+/// 验证码自检：抓当前弹窗（或读一张截图）→ 切图 → 标注 → 读题 → 逐块判定 → 给出会点哪几张，
+/// 把每一步写进报告。命令行（--captchacheck）和设置页的「测试识别」按钮共用这一套逻辑，
+/// 而且走的是实机同一条识别链路，保证两边结论一致。
 /// </summary>
 public static class CaptchaSelfCheck
 {
@@ -106,21 +107,73 @@ public static class CaptchaSelfCheck
             }
 
             report.AppendLine($"识别接口：{settings.CaptchaApiBaseUrl} 模型：{settings.CaptchaModel}");
-            Cv2.ImEncode(".jpg", annotated, out var jpeg,
-                new ImageEncodingParam(ImwriteFlags.JpegQuality, 92));
 
+            // 自检必须和实机走同一条链路（读题 → 逐块 → 程序判定），否则「测试识别」显示全选、
+            // 实机却点第 1 张，两边对不上，排查时只会更乱。
             var client = new VisionCaptchaClient(log);
-            var answer = await client.AskAsync(jpeg, grid.Tiles.Count, settings, ct);
-            if (answer == null)
+
+            using var questionImage = CaptchaGrid.CropQuestion(image, grid);
+            if (questionImage == null)
             {
-                report.AppendLine("模型调用失败，原因见运行日志。");
+                report.AppendLine("题目区裁不出来（切图边界异常）。");
                 exitCode = 1;
                 return new CaptchaCheckResult(exitCode, report.ToString(), annotatedPath);
             }
 
-            report.AppendLine($"模型回答：target=「{answer.Target}」 picks=[{string.Join(",", answer.Picks)}] "
-                              + $"置信度={answer.Confidence:F2}");
-            report.AppendLine($"原始回答：{answer.Raw.Replace("\n", " ")}");
+            var question = await client.ReadQuestionAsync(CaptchaGrid.EncodePng(questionImage), settings, ct);
+            if (string.IsNullOrWhiteSpace(question))
+            {
+                report.AppendLine("读题没有返回内容，原因见运行日志。");
+                exitCode = 1;
+                return new CaptchaCheckResult(exitCode, report.ToString(), annotatedPath);
+            }
+
+            report.AppendLine($"读题：{question}");
+
+            var lookForText = CaptchaService.ExtractLiteral(question) != null;
+            var target = CaptchaService.ExtractLiteral(question) ?? CaptchaService.ExtractTarget(question);
+            report.AppendLine($"比对目标：「{target}」"
+                              + (lookForText ? "（藏字题，按字面匹配）" : "（语义题，按画面描述匹配）"));
+
+            var verdicts = new List<TileVerdict>();
+            foreach (var tile in grid.Tiles)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                using var tileImage = CaptchaGrid.CropTile(image, tile, 4);
+                if (tileImage == null)
+                {
+                    report.AppendLine($"#{tile.Index} 裁不出来，跳过");
+                    continue;
+                }
+
+                var verdict = await client.CheckTileAsync(CaptchaGrid.EncodePng(tileImage), lookForText, tile.Index,
+                    settings, ct);
+                if (verdict == null)
+                {
+                    report.AppendLine($"#{tile.Index} 判定失败（响应解析不出来，见运行日志）");
+                    continue;
+                }
+
+                verdicts.Add(verdict);
+                report.AppendLine($"#{verdict.Index} seen=「{verdict.Seen}」 "
+                                  + $"匹配度 {CaptchaService.MatchStrength(verdict.Seen, target)}");
+            }
+
+            var answer = CaptchaService.Decide(question, verdicts);
+            if (answer == null)
+            {
+                report.AppendLine("题目里取不出要比对的目标词，无法判定。");
+                exitCode = 1;
+                return new CaptchaCheckResult(exitCode, report.ToString(), annotatedPath);
+            }
+
+            report.AppendLine($"判定结果：picks=[{string.Join(",", answer.Picks)}] 置信度={answer.Confidence:F2}");
+            if (!answer.IsUsable)
+            {
+                report.AppendLine("六张候选图都没匹配上，实机会重拍重识别，不会提交。");
+                exitCode = 1;
+            }
 
             if (!solve || window == null || !answer.IsUsable)
             {

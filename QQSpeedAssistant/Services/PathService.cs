@@ -23,6 +23,9 @@ public static class PathService
     /// <summary>日志目录。</summary>
     public static string LogDir => Path.Combine(UserDir, "log");
 
+    /// <summary>调试截图目录（失败截图、验证码识别现场、自检报告）。</summary>
+    public static string DebugDir => Path.Combine(UserDir, "debug");
+
     /// <summary>账号配置文件。</summary>
     public static string AccountsFile => Path.Combine(UserDir, "accounts.json");
 
@@ -40,6 +43,7 @@ public static class PathService
         Directory.CreateDirectory(TemplateDir);
         Directory.CreateDirectory(RewardDir);
         Directory.CreateDirectory(LogDir);
+        Directory.CreateDirectory(DebugDir);
     }
 
     /// <summary>把账号、玩法名等文本转换为合法目录名。</summary>

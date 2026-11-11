@@ -83,12 +83,22 @@ public sealed class AccountLoginService
         }
 
         // 通道二：UIA 直接填表
-        if (await TryUiaLoginAsync(session, account, settings, ct))
+        try
         {
-            session.MarkLoggedIn();
-            _log.Success("登录成功（UIA 直接填表，未使用鼠标键盘）", account.Account);
-            session.EnsureGameClientSize();
-            return LoginResult.Ok();
+            if (await TryUiaLoginAsync(session, account, settings, ct))
+            {
+                session.MarkLoggedIn();
+                _log.Success("登录成功（UIA 直接填表，未使用鼠标键盘）", account.Account);
+                session.EnsureGameClientSize();
+                return LoginResult.Ok();
+            }
+        }
+        catch (FlowException ex) when (ex.Reason == FlowFailReasons.EnvAbnormal)
+        {
+            _log.Error("QQ 拦下了本次登录：过码之后弹出「登录失败／推荐扫码」提示。"
+                       + "这是风控不是密码问题，这个号本次不再自动重试；"
+                       + "建议先用手机QQ扫码登录一次，把登录态和常用环境养回来", account.Account);
+            return LoginResult.Fail(AccountRunStatus.EnvAbnormal, ex.Message);
         }
 
         // 通道三：键鼠流程
@@ -130,6 +140,14 @@ public sealed class AccountLoginService
                     return LoginResult.Fail(AccountRunStatus.Captcha, "验证码未通过");
                 }
 
+                if (pending == CaptchaOutcome.Rejected)
+                {
+                    _log.Error("QQ 拦下了本次登录：过码之后弹出「登录失败／推荐扫码」提示，"
+                               + "这是风控不是密码问题。已停止这个号的自动重试，别再连点；"
+                               + "建议先用手机QQ扫码登录一次，把登录态和常用环境养回来", account.Account);
+                    return LoginResult.Fail(AccountRunStatus.EnvAbnormal, "登录被风控拦截（提示登录失败／请扫码）");
+                }
+
                 if (pending is CaptchaOutcome.Solved or CaptchaOutcome.ManualSolved)
                 {
                     _log.Success("登录后的验证码已通过", account.Account);
@@ -155,12 +173,19 @@ public sealed class AccountLoginService
             // 所以先查有没有验证码：处理掉了就原地重来，这一次不算密码重试次数。
             if (captchaRecoveries < captchaLimit)
             {
-                var outcome = await TryHandleCaptchaAsync(settings, account.Account, ct, 2500);
+                var outcome = await TryHandleCaptchaAsync(settings, account.Account, ct, 2500, session.ProcessId);
                 if (outcome is CaptchaOutcome.Solved or CaptchaOutcome.ManualSolved)
                 {
                     captchaRecoveries++;
                     _log.Info($"验证码已通过，重新执行登录流程（{captchaRecoveries}/{captchaLimit}）", account.Account);
                     continue;
+                }
+
+                if (outcome == CaptchaOutcome.Rejected)
+                {
+                    _log.Error("QQ 拦下了本次登录（过码后弹出「登录失败／推荐扫码」），这是风控不是密码问题；"
+                               + "已停止这个号的自动重试，建议先用手机QQ扫码登一次", account.Account);
+                    return LoginResult.Fail(AccountRunStatus.EnvAbnormal, "登录被风控拦截（提示登录失败／请扫码）");
                 }
 
                 if (outcome == CaptchaOutcome.TimedOut)
@@ -227,8 +252,8 @@ public sealed class AccountLoginService
 
     /// <summary>检测并处理登录验证码：没有验证码时立即返回 NotPresent（不阻塞流程）。</summary>
     private Task<CaptchaOutcome> TryHandleCaptchaAsync(AppSettings settings, string account, CancellationToken ct,
-        int detectTimeoutMs)
-        => _captcha.HandleIfPresentAsync(settings, account, ct, detectTimeoutMs);
+        int detectTimeoutMs, int gameProcessId = 0)
+        => _captcha.HandleIfPresentAsync(settings, account, ct, detectTimeoutMs, gameProcessId);
 
     /// <summary>
     /// 登录流程跑完后的收尾确认：一边等大厅画面出现，一边接住这期间异步弹出的验证码。
@@ -249,14 +274,35 @@ public sealed class AccountLoginService
             // 有验证码就先处理：弹窗盖在画面上时，大厅判定永远不可能命中。
             if (CaptchaWindowLocator.Find(settings) != null)
             {
-                var outcome = await _captcha.HandleIfPresentAsync(settings, account.Account, ct, 1500);
-                if (outcome == CaptchaOutcome.TimedOut)
+                var outcome = await _captcha.HandleIfPresentAsync(settings, account.Account, ct, 1500, session.ProcessId);
+                if (outcome is CaptchaOutcome.TimedOut or CaptchaOutcome.Rejected)
                 {
-                    return CaptchaOutcome.TimedOut;
+                    return outcome;
                 }
 
                 solved |= outcome is CaptchaOutcome.Solved or CaptchaOutcome.ManualSolved;
                 continue;
+            }
+
+            // 验证码没了但也没进大厅：先看是不是顶上来了「登录失败／请扫码」的提示框。
+            // 这个框是风控拦截，跟密码、验证码都无关，必须当场认出来，别继续跑玩法。
+            var notice = LoginRejectWatcher.Find(session.ProcessId);
+            if (notice != null)
+            {
+                _log.Error($"弹出「{notice.Title}」对话框（{notice.Width}x{notice.Height}）："
+                           + "QQ 判定本次登录异常，账号并没进游戏。已停止这个号的自动重试", account.Account);
+                return CaptchaOutcome.Rejected;
+            }
+
+            if (_matcher.TemplateExists("login_failed_notice"))
+            {
+                using var noticeFrame = session.CaptureFrame();
+                if (noticeFrame != null && !noticeFrame.Empty()
+                    && _matcher.Find(noticeFrame, "login_failed_notice", 0.85).Found)
+                {
+                    _log.Error("画面命中「login_failed_notice」模板：登录失败提示框，账号并没进游戏", account.Account);
+                    return CaptchaOutcome.Rejected;
+                }
             }
 
             if (hasHallTemplate)
@@ -269,6 +315,23 @@ public sealed class AccountLoginService
             }
 
             await Task.Delay(800, ct);
+        }
+
+        // 等不到大厅，最后再确认一次有没有被风控顶掉：有就判失败，别把一个没登录的客户端拖进玩法。
+        var lastNotice = LoginRejectWatcher.Find(session.ProcessId);
+        if (lastNotice != null)
+        {
+            _log.Error($"等到超时也没进大厅，屏幕上却挂着「{lastNotice.Title}」对话框 —— 登录已被拦下", account.Account);
+            return CaptchaOutcome.Rejected;
+        }
+
+        // 顺手把游戏进程下的小窗口记进日志：下次再遇到「登录失败」提示时，
+        // 看一眼这行就知道它到底是独立窗口（标题是什么），还是直接画在游戏画面里的。
+        var scan = LoginRejectWatcher.Scan(session.ProcessId);
+        if (scan.Count > 0)
+        {
+            _log.Info("游戏进程下的可见小窗口：" + string.Join("；", scan.Select(w => $"「{w.Title}」{w.Width}x{w.Height}")),
+                account.Account);
         }
 
         if (hasHallTemplate)
@@ -468,11 +531,17 @@ public sealed class AccountLoginService
         }
 
         // ③ 提交后先看有没有验证码：弹窗会盖住登录界面，让「登录按钮消失」的判定彻底失效。
-        var captcha = await TryHandleCaptchaAsync(settings, account.Account, ct, 12000);
+        var captcha = await TryHandleCaptchaAsync(settings, account.Account, ct, 12000, session.ProcessId);
         if (captcha == CaptchaOutcome.TimedOut)
         {
             _log.Error("验证码未通过（人工等待超时），本次登录判失败", account.Account);
             return false;
+        }
+
+        if (captcha == CaptchaOutcome.Rejected)
+        {
+            // 风控拦截：再拿键鼠流程登一遍只会雪上加霜，直接把整个账号中止掉。
+            throw new FlowException(FlowFailReasons.EnvAbnormal, "登录被风控拦截（提示登录失败／请扫码）");
         }
 
         if (captcha is CaptchaOutcome.Solved or CaptchaOutcome.ManualSolved)

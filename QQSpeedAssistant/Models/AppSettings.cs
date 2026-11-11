@@ -234,9 +234,16 @@ public sealed partial class AppSettings : ObservableObject
 
     /// <summary>
     /// 是否记录 AI 调用日志。开启后每一次模型请求（含失败、限流、重试）都会单独写一节到
-    /// User/log/ai/ai-yyyyMMdd.log，内容包括完整请求体、完整响应体、状态码与耗时；
-    /// 请求里带的图片另存到 User/log/ai/media/（日志保留 14 天，图片 7 天）。
+    /// User/log/ai/yyyy-MM-dd/ai-yyyyMMdd.log，内容包括完整请求体、完整响应体、状态码与耗时；
+    /// 请求里带的图片存在同一天目录的 media 子目录里，便于整体拷走或删除。
     /// </summary>
     [ObservableProperty]
     private bool _aiRequestLogEnabled = true;
+
+    /// <summary>
+    /// 日志与截图的保留天数。超过这个天数的 User/log/ai/日期目录（正文＋图片）、
+    /// run-*.log 和 User/debug 下的调试截图会被自动删除，0 表示永不清理。
+    /// </summary>
+    [ObservableProperty]
+    private int _aiLogRetainDays = 7;
 }

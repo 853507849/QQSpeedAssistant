@@ -137,6 +137,20 @@
                 <Setter Property="Margin" Value="4,0,0,0" />
             </Style>
 
+            <!-- 说明入口按钮：红字 + 暗红底，普通灰按钮在一堆设置项里根本看不见 -->
+            <Style x:Key="HintButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                <Setter Property="Background" Value="#2E1216" />
+                <Setter Property="BorderBrush" Value="#8B2B30" />
+                <Setter Property="Foreground" Value="#FF6B6B" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+
+            <Style x:Key="HintSmallButton" TargetType="Button" BasedOn="{StaticResource HintButton}">
+                <Setter Property="Padding" Value="8,2" />
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="Margin" Value="8,0,0,0" />
+            </Style>
+
             <!-- 输入框 -->
             <Style TargetType="TextBox">
                 <Setter Property="Background" Value="{StaticResource InputBrush}" />

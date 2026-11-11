@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -8,22 +9,14 @@ namespace QQSpeedAssistant.Services;
 /// AI 调用专用日志：每一次向模型发请求，都把完整的请求体、响应体、状态码、耗时单独落盘。
 /// 和 run-*.log 分开写，原因有两个：模型返回的内容动辄几千字，混进运行日志会把有用信息冲掉；
 /// 排查「到底是提示词的问题，还是接口报错」时，一次调用一节，直接往上翻就够。
-/// 文本写入 User/log/ai/ai-yyyyMMdd.log，请求里带的图片另存到 User/log/ai/media/。
+///
+/// 目录按天归档，同一天的正文和图片放在同一个文件夹里，拷走或删掉都是一次操作：
+/// User/log/ai/2026-11-11/ai-20261111.log
+/// User/log/ai/2026-11-11/media/20261111-091233-511-000003.jpg
+/// 过期清理见 <see cref="LogRetention"/>。
 /// </summary>
 public static class AiRequestLogger
 {
-    /// <summary>文本日志目录。</summary>
-    public static string LogDir => Path.Combine(PathService.LogDir, "ai");
-
-    /// <summary>请求附件（图片）目录。</summary>
-    public static string MediaDir => Path.Combine(LogDir, "media");
-
-    /// <summary>文本日志保留天数。</summary>
-    private const int KeepDays = 14;
-
-    /// <summary>图片保留天数（图片体积大，不必留那么久）。</summary>
-    private const int KeepMediaDays = 7;
-
     /// <summary>单段内容上限。异常响应可能是一整页 HTML，超过就截断，避免把磁盘写满。</summary>
     private const int MaxBlockChars = 256 * 1024;
 
@@ -34,6 +27,9 @@ public static class AiRequestLogger
 
     private static int _sequence;
 
+    /// <summary>日期目录名的格式，也是识别「这是不是一天的数据」的依据。</summary>
+    public const string DayFormat = "yyyy-MM-dd";
+
     /// <summary>请求体里的 data URI（图片 base64），正文里换成占位符，原图另存文件。</summary>
     private static readonly Regex DataUriPattern = new(
         @"data:(?<mime>image/[a-zA-Z0-9.+-]+);base64,(?<data>[A-Za-z0-9+/=\s]+)",
@@ -41,8 +37,20 @@ public static class AiRequestLogger
 
     static AiRequestLogger()
     {
-        Purge();
+        MigrateLegacyLayout();
     }
+
+    /// <summary>AI 日志根目录，下面按天分子目录。</summary>
+    public static string LogDir => Path.Combine(PathService.LogDir, "ai");
+
+    /// <summary>某一天的归档目录：正文与 media 子目录都放在这里。</summary>
+    public static string DayDirOf(DateTime time) => Path.Combine(LogDir, time.ToString(DayFormat));
+
+    /// <summary>某一天的请求附件（图片）目录。</summary>
+    public static string MediaDirOf(DateTime time) => Path.Combine(DayDirOf(time), "media");
+
+    /// <summary>某一天的日志文件。</summary>
+    public static string FileOf(DateTime time) => Path.Combine(DayDirOf(time), $"ai-{time:yyyyMMdd}.log");
 
     /// <summary>
     /// 开始记录一次调用。返回的对象必须结束（<see cref="AiCall.Success"/> 或 <see cref="AiCall.Failure"/>），
@@ -63,6 +71,9 @@ public static class AiRequestLogger
             return null;
         }
 
+        // 程序常常跨天常驻，清理不能只靠启动那一次。
+        LogRetention.PurgeIfNewDay();
+
         var id = Interlocked.Increment(ref _sequence);
         var startedAt = DateTime.Now;
 
@@ -71,9 +82,6 @@ public static class AiRequestLogger
 
         return new AiCall(id, scene, model, endpoint, MaskKey(apiKey), body, startedAt, log);
     }
-
-    /// <summary>今天的日志文件路径。</summary>
-    public static string FileOf(DateTime time) => Path.Combine(LogDir, $"ai-{time:yyyyMMdd}.log");
 
     /// <summary>把请求里的 base64 图片换成占位符，正文保持可读。</summary>
     private static string RedactImages(string body, string? imageName, int byteLength)
@@ -109,14 +117,16 @@ public static class AiRequestLogger
             : $"Bearer {key[..4]}****{key[^4..]}（长度 {key.Length}）";
     }
 
-    /// <summary>把请求用的图片存成独立文件，返回文件名；失败返回 null，不影响调用本身。</summary>
+    /// <summary>把请求用的图片存进当天的 media 子目录，返回文件名；失败返回 null，不影响调用本身。</summary>
     private static string? SaveImage(byte[] image, DateTime at, int id)
     {
         try
         {
-            Directory.CreateDirectory(MediaDir);
+            var dir = MediaDirOf(at);
+            Directory.CreateDirectory(dir);
+
             var name = $"{at:yyyyMMdd-HHmmss-fff}-{id:D6}.jpg";
-            File.WriteAllBytes(Path.Combine(MediaDir, name), image);
+            File.WriteAllBytes(Path.Combine(dir, name), image);
             return name;
         }
         catch
@@ -125,40 +135,85 @@ public static class AiRequestLogger
         }
     }
 
-    /// <summary>清理过期日志与图片。放在静态构造里，进程内只跑一次。</summary>
-    private static void Purge()
+    /// <summary>
+    /// 把旧版扁平结构搬进按天目录：旧版是 User/log/ai/ai-yyyyMMdd.log 与 User/log/ai/media/*.jpg 平铺，
+    /// 图片不带日期目录，长期下来既分不清是哪天，也没法按天整目录清理。
+    /// </summary>
+    private static void MigrateLegacyLayout()
     {
         try
         {
-            var now = DateTime.Now;
-
-            if (Directory.Exists(LogDir))
+            if (!Directory.Exists(LogDir))
             {
-                foreach (var file in Directory.EnumerateFiles(LogDir, "ai-*.log"))
+                return;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(LogDir, "ai-*.log"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                if (name.Length <= 3 || !TryParseDay(name[3..], "yyyyMMdd", out var day))
                 {
-                    if (now - File.GetLastWriteTime(file) > TimeSpan.FromDays(KeepDays))
-                    {
-                        File.Delete(file);
-                    }
+                    continue;
+                }
+
+                var target = FileOf(day);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+
+                // 同一天的目标已存在（升级当天已经按新结构写过），把旧内容接在后面而不是覆盖。
+                if (File.Exists(target))
+                {
+                    File.AppendAllText(target, File.ReadAllText(file));
+                    File.Delete(file);
+                }
+                else
+                {
+                    File.Move(file, target);
                 }
             }
 
-            if (Directory.Exists(MediaDir))
+            var legacyMedia = Path.Combine(LogDir, "media");
+            if (Directory.Exists(legacyMedia))
             {
-                foreach (var file in Directory.EnumerateFiles(MediaDir))
+                foreach (var file in Directory.EnumerateFiles(legacyMedia))
                 {
-                    if (now - File.GetLastWriteTime(file) > TimeSpan.FromDays(KeepMediaDays))
+                    var name = Path.GetFileName(file);
+
+                    // 旧图片名形如 20261111-091233-511-000003.jpg，前 8 位就是日期。
+                    if (name.Length < 8 || !TryParseDay(name[..8], "yyyyMMdd", out var day))
+                    {
+                        continue;
+                    }
+
+                    var dir = MediaDirOf(day);
+                    Directory.CreateDirectory(dir);
+
+                    var target = Path.Combine(dir, name);
+                    if (File.Exists(target))
                     {
                         File.Delete(file);
                     }
+                    else
+                    {
+                        File.Move(file, target);
+                    }
+                }
+
+                // 搬空了就把旧 media 目录去掉，免得留一个空壳继续误导。
+                if (!Directory.EnumerateFileSystemEntries(legacyMedia).Any())
+                {
+                    Directory.Delete(legacyMedia);
                 }
             }
         }
         catch
         {
-            // 清理失败与业务无关。
+            // 迁移失败不影响程序启动，旧文件留在原地，下次启动再试。
         }
     }
+
+    /// <summary>按指定格式解析日期，失败返回 false 而不是抛异常。</summary>
+    internal static bool TryParseDay(string text, string format, out DateTime day)
+        => DateTime.TryParseExact(text, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out day);
 
     /// <summary>正文截断，保留原始长度提示。</summary>
     private static string Clamp(string? text)
@@ -258,7 +313,7 @@ public static class AiRequestLogger
                 var file = FileOf(_startedAt);
                 lock (Gate)
                 {
-                    Directory.CreateDirectory(LogDir);
+                    Directory.CreateDirectory(DayDirOf(_startedAt));
                     File.AppendAllText(file, sb.ToString(), Encoding.UTF8);
                 }
 

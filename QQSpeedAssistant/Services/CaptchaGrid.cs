@@ -100,6 +100,13 @@ public static class CaptchaGrid
             kept = candidates;
         }
 
+        // 连通域对「白球 + 浅灰底 + 草地」这类低饱和照片不稳定：实测足球那张会和一条贯穿对话框的
+        // 细线并成一个 563x540 的稀疏大块，大块随后因尺寸异常被剔掉，整格候选图凭空消失（6 块只剩 5 块）。
+        // 这类验证码是严格等距宫格，用已确认的图块反推行列坐标，把缺的格子补回来。
+        var gridWidth = Median(kept.Select(r => r.Width));
+        var gridHeight = Median(kept.Select(r => r.Height));
+        kept = FillGridGaps(kept, gridWidth, gridHeight, box, report);
+
         // 先按行分组（y 中心接近的算同一行），行内按 x 排序，最后统一编号。
         var tiles = new List<CaptchaTile>();
         var index = 1;
@@ -302,6 +309,91 @@ public static class CaptchaGrid
     }
 
     /// <summary>
+    /// 补齐宫格里漏掉的格子。
+    /// 连通域本身并不可靠：低饱和照片（白球、浅色布景）容易与贯穿对话框的细线阴影连成一片，
+    /// 那个跨界大块随后因尺寸异常被剔除，格子就少一个。这里不再依赖掩码，
+    /// 改用「已确认的图块位置」反推行列坐标，按笛卡尔积把缺的格子补出来。
+    /// </summary>
+    private static List<Rect> FillGridGaps(List<Rect> kept, double tileWidth, double tileHeight, Rect content,
+        System.Text.StringBuilder report)
+    {
+        // 少于 3 块时行列都推不准，宁可不补，免得凭空造出格子。
+        if (kept.Count < 3 || tileWidth < MinTileSide || tileHeight < MinTileSide)
+        {
+            return kept;
+        }
+
+        var columns = ClusterCenters(kept.Select(r => (double)r.X), tileWidth * 0.5);
+        var rows = ClusterCenters(kept.Select(r => (double)r.Y), tileHeight * 0.5);
+
+        // 网格规模不大于现有块数，说明没有缺格，原样返回。
+        if (columns.Count < 2 || rows.Count < 2 || columns.Count * rows.Count <= kept.Count)
+        {
+            return kept;
+        }
+
+        var width = (int)Math.Round(tileWidth);
+        var height = (int)Math.Round(tileHeight);
+        var filled = new List<Rect>(kept);
+
+        foreach (var rowY in rows)
+        {
+            foreach (var colX in columns)
+            {
+                var x = (int)Math.Round(colX);
+                var y = (int)Math.Round(rowY);
+
+                // 这个格子上已经有图块了（容差取半个块，允许 1～2 像素抖动）。
+                var occupied = kept.Any(r =>
+                    Math.Abs(r.X - x) <= tileWidth * 0.4 && Math.Abs(r.Y - y) <= tileHeight * 0.4);
+                if (occupied)
+                {
+                    continue;
+                }
+
+                // 补出来的格子必须整块落在有效内容区内，越界说明行／列估偏了，宁可不补。
+                if (x < content.X || y < content.Y
+                    || x + width > content.X + content.Width
+                    || y + height > content.Y + content.Height)
+                {
+                    report.AppendLine($"  网格补块越界 ({x},{y},{width}x{height})，跳过");
+                    continue;
+                }
+
+                filled.Add(new Rect(x, y, width, height));
+                report.AppendLine($"  网格补块 ({x},{y},{width}x{height})：连通域漏掉了这一格");
+            }
+        }
+
+        return filled;
+    }
+
+    /// <summary>把一组坐标按容差聚簇，返回每簇的中位数，用来从图块位置反推行／列坐标。</summary>
+    private static List<double> ClusterCenters(IEnumerable<double> values, double tolerance)
+    {
+        var centers = new List<double>();
+        var cluster = new List<double>();
+
+        foreach (var value in values.OrderBy(v => v))
+        {
+            if (cluster.Count > 0 && value - cluster[^1] > tolerance)
+            {
+                centers.Add(Median(cluster.Select(v => (int)Math.Round(v))));
+                cluster.Clear();
+            }
+
+            cluster.Add(value);
+        }
+
+        if (cluster.Count > 0)
+        {
+            centers.Add(Median(cluster.Select(v => (int)Math.Round(v))));
+        }
+
+        return centers;
+    }
+
+    /// <summary>
     /// 给每张图块画红框和编号，再交给视觉模型：编号直接落在图上，模型不用去猜行列，
     /// 回答只要给编号，点击时就不会错位。
     /// </summary>
@@ -328,5 +420,93 @@ public static class CaptchaGrid
         }
 
         return canvas;
+    }
+
+    /// <summary>
+    /// 裁出候选图上方的「题目区」（含上方那句说明与题目行），按 <paramref name="scale"/> 放大。
+    /// 题目行在整图里只有几十像素高，整图送进视觉模型时按 28 像素折算才得到 1~2 个 token，
+    /// 必然读不全；单独裁出来放大才有足够分辨率。
+    /// </summary>
+    public static Mat? CropQuestion(Mat source, Result grid, int scale = 2)
+    {
+        if (source.Empty() || grid.Tiles.Count == 0)
+        {
+            return null;
+        }
+
+        using var bgr = ToBgr(source);
+
+        var top = grid.ContentBox.Y;
+        var tileTop = grid.Tiles.Min(t => t.Y);
+        var height = tileTop - top;
+
+        // 切图边界异常时（题目区算出来太矮）按图块高度的 40% 估一个，总比不送强。
+        if (height < 24)
+        {
+            var tileHeight = (int)grid.Tiles.Average(t => t.Height);
+            height = Math.Max(30, (int)(tileHeight * 0.4));
+            top = Math.Max(0, tileTop - height);
+        }
+
+        var left = Math.Max(0, grid.ContentBox.X);
+
+        // ContentBox 可能超出去（PrintWindow 留下的黑边没完全收紧），夹回图内。
+        var right = Math.Min(bgr.Width, left + grid.ContentBox.Width);
+        height = Math.Min(height, bgr.Height - top);
+        var width = right - left;
+
+        if (width < 20 || height < 12)
+        {
+            return null;
+        }
+
+        using var crop = new Mat(bgr, new Rect(left, top, width, height));
+        var scaled = new Mat();
+        Cv2.Resize(crop, scaled, new Size(width * scale, height * scale), 0, 0, InterpolationFlags.Cubic);
+        return scaled;
+    }
+
+    /// <summary>
+    /// 裁出单张候选图并放大，用于「逐块二分类」判定。
+    /// 单块 139x138 在整图里只占约 25 个视觉 token，藏字根本看不见；
+    /// 放大 4 倍后单块能拿到约 400 个 token，才有机会分辨笔划。
+    /// </summary>
+    public static Mat? CropTile(Mat source, CaptchaTile tile, int scale = 4)
+    {
+        if (source.Empty())
+        {
+            return null;
+        }
+
+        using var bgr = ToBgr(source);
+
+        // 图块矩形可能与图像边界有 1~2 像素出入，先求交再裁，否则 Mat 构造会直接抛异常。
+        var left = Math.Max(0, tile.X);
+        var top = Math.Max(0, tile.Y);
+        var right = Math.Min(bgr.Width, tile.X + tile.Width);
+        var bottom = Math.Min(bgr.Height, tile.Y + tile.Height);
+        var width = right - left;
+        var height = bottom - top;
+
+        if (width < 8 || height < 8)
+        {
+            return null;
+        }
+
+        using var crop = new Mat(bgr, new Rect(left, top, width, height));
+        var scaled = new Mat();
+        Cv2.Resize(crop, scaled, new Size(width * scale, height * scale), 0, 0, InterpolationFlags.Cubic);
+        return scaled;
+    }
+
+    /// <summary>
+    /// 送模型统一用 PNG 无损编码。
+    /// 藏字类题目的判别依据是叠在背景上的微弱亮度差，JPEG 的 DCT 量化正好砍掉这类高频小对比度，
+    /// 一张 92 质量的图能把仅剩的线索抹平。
+    /// </summary>
+    public static byte[] EncodePng(Mat image)
+    {
+        Cv2.ImEncode(".png", image, out var bytes);
+        return bytes;
     }
 }

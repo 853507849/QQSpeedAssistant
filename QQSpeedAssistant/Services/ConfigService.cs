@@ -45,6 +45,9 @@ public sealed class ConfigService
         // 日志开关从配置里读回来，不跟着走的话界面上关掉也照样记。
         AiRequestLogger.Enabled = Settings.AiRequestLogEnabled;
 
+        // 保留天数同样要立刻生效：这里会顺带把过期日志清一遍（每天只跑一次）。
+        LogRetention.Apply(Settings.AiLogRetainDays);
+
         var accounts = Read<List<AccountEntry>>(PathService.AccountsFile) ?? [];
         Accounts.Clear();
         var order = 1;
@@ -125,7 +128,14 @@ public sealed class ConfigService
     public void SaveTasks() => Write(PathService.TasksFile, Tasks.ToList());
 
     /// <summary>保存运行设置。</summary>
-    public void SaveSettings() => Write(PathService.SettingsFile, Settings);
+    public void SaveSettings()
+    {
+        Write(PathService.SettingsFile, Settings);
+
+        // 用户把保留天数改小之后，希望马上看到效果，而不是等下次启动。
+        // 天数没变时 Apply 内部会按「当天只跑一次」短路，不会反复扫目录。
+        LogRetention.Apply(Settings.AiLogRetainDays);
+    }
 
     /// <summary>保存全部配置。</summary>
     public void SaveAll()

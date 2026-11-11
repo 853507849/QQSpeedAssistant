@@ -14,6 +14,9 @@ public sealed record CaptchaAnswer(string Target, IReadOnlyList<int> Picks, doub
     public bool IsUsable => Picks.Count > 0;
 }
 
+/// <summary>单张候选图的判定结果。Seen 是模型在图里实际看到的内容。</summary>
+public sealed record TileVerdict(int Index, bool Hit, double Confidence, string Seen, string Raw);
+
 /// <summary>
 /// 调用「OpenAI 兼容」的视觉模型接口识别图片验证码。
 /// 地址、密钥、模型名都在设置里填，因此云端（通义千问／智谱等）和本地（Ollama）都能直接用。
@@ -25,7 +28,9 @@ public sealed class VisionCaptchaClient
     private static readonly HttpClient Http = new()
     {
         // 视觉模型要读图，比普通文本请求慢，给足超时。
-        Timeout = TimeSpan.FromSeconds(60)
+        // 本地 Ollama 还有个坑：模型闲置 5 分钟会被卸载，冷启动要 40 秒以上（实测 49 秒），
+        // 60 秒会踩线，所以一律放开到 120 秒。
+        Timeout = TimeSpan.FromSeconds(120)
     };
 
     /// <summary>构造客户端。</summary>
@@ -54,26 +59,104 @@ public sealed class VisionCaptchaClient
                || url.Contains("[::1]", StringComparison.Ordinal);
     }
 
-    /// <summary>把标注过编号的截图交给视觉模型，要它返回题目关键词与命中编号。</summary>
-    public async Task<CaptchaAnswer?> AskAsync(byte[] jpeg, int tileCount, AppSettings settings, CancellationToken ct)
+    /// <summary>
+    /// 第一步：只把题目区送去读字，读回题目原文。
+    /// 读题和选图拆成两次调用，是因为小参数量模型在「先抄题、再逐张比对」这种多步任务上会退化——
+    /// 它给不出中间比对过程，就直接吐一个最省事的答案（全选）。
+    /// </summary>
+    public async Task<string?> ReadQuestionAsync(byte[] png, AppSettings settings, CancellationToken ct)
     {
-        var baseUrl = settings.CaptchaApiBaseUrl.Trim().TrimEnd('/');
-        var endpoint = baseUrl.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)
-            ? baseUrl
-            : $"{baseUrl}/chat/completions";
+        var endpoint = ResolveEndpoint(settings);
 
         var prompt =
-            "这是一张 QQ 登录时弹出的图片验证码截图。图中每张候选图都已用红框框出，左上角写着红色编号，"
-            + $"一共 {tileCount} 张，编号 1 到 {tileCount}。\n"
-            + "请完成两件事：\n"
-            + "① 读出截图里的题目文字（形如「选择最符合描述的图片：XXX」），把 XXX 原样作为 target；\n"
-            + "② 逐张判断候选图是否与 target 相符，按题目要求选出最符合的（可以 1 张，也可以多张）。\n"
-            + "只输出一个 JSON 对象，不要输出解释、不要用 Markdown 代码块：\n"
-            + "{\"target\":\"XXX\",\"picks\":[1],\"confidence\":0.8}\n"
-            + "picks 里只能出现上面那些编号，确认不了就返回空数组。";
+            "这是 QQ 登录验证码弹窗的顶部区域截图。这里通常有两行文字：\n"
+            + "第一行是说明，形如「为了你的账号安全，请按要求完成下列操作」；\n"
+            + "第二行才是题目，形如「选择最符合描述的图片：一只猫」，"
+            + "或者「选择所有符合描述的图片：包含文字 \"个\"」。\n"
+            + "请只抄出第二行题目的完整原文，一个字都不要改，也不要抄第一行的说明。\n"
+            + "直接输出这行文字本身：不要加引号、不要加解释、不要用 JSON、不要换行。";
 
-        // 免费模型有每分钟调用上限：智谱 glm-4.6v-flash 打满就直接回 429，
-        // 换个同平台的免费模型往往还有余量，比干等它解封强。
+        var key = settings.CaptchaApiKey?.Trim() ?? "";
+
+        foreach (var model in ResolveModels(settings))
+        {
+            var text = await TryModelAsync(endpoint, model, "验证码读题", prompt, png, false, "image/png", key,
+                static content => string.IsNullOrWhiteSpace(content) ? "" : content.Trim(), ct);
+
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                RateLimitedAt.TryRemove(model, out _);
+                return text;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 第二步：把单张候选图放大后单独送去判定，只让模型报告「它在图里实际看到了什么」。
+    /// 二分类比「在六张里挑出所有符合的」容易一个量级，而且单张图能独占总分辨率预算，
+    /// 不用和另外五张分那几百个视觉 token。
+    /// </summary>
+    /// <param name="png">单张候选图（已放大）。</param>
+    /// <param name="lookForText">
+    /// 题目是不是「包含文字 X」那一类。是就只问「辨认到什么字」，否则只问「画面里最主要的东西」。
+    /// 两种问法都**不能把题目原文告诉模型**——见下面 prompt 的注释。
+    /// </param>
+    /// <param name="index">候选图编号，只用于日志。</param>
+    /// <param name="settings">运行设置。</param>
+    /// <param name="ct">取消标记。</param>
+    public async Task<TileVerdict?> CheckTileAsync(byte[] png, bool lookForText, int index, AppSettings settings,
+        CancellationToken ct)
+    {
+        var endpoint = ResolveEndpoint(settings);
+
+        // 三个坑，全是实测踩出来的：
+        // ① 问「这张图符不符合题目」这种抽象判断，3B 会敷衍——一律回 false、confidence 0.01；
+        // ② 把题目里的词（「绵羊」）写进单块提示词，3B 会顺着题目答：实测沙漠日落、海滩日落两张
+        //    都被它报成「绵羊」，六张里只有一张真是羊。所以目标词一个字都不能出现在提示词里；
+        // ③ JSON 示例里写 "hit":true，它会把这个模板值原样抄回来，于是六块全「符合」。
+        // 结论：只问事实（图里是什么/什么字），判断留给调用方做字符串匹配。
+        var prompt = lookForText
+            ? "这是一张 QQ 登录验证码里的候选图。\n"
+              + "图里可能叠着一个很淡、半透明的汉字（有时是用景物拼出来的字形），也可能没有。\n"
+              + "只回答一件事：你辨认到的汉字是什么？一个字都没辨认到就留空，不要猜、不要编。\n"
+              + "只输出 JSON，不要解释、不要用 Markdown 代码块：{\"seen\":\"个\"}"
+            : "这是一张 QQ 登录验证码里的候选图。\n"
+              + "只回答一件事：这张图里最主要的东西是什么？\n"
+              + "只写名称，不超过 4 个字（例如「绵羊」「麦田」「橙子」「沙漠」），"
+              + "不要写句子、不要写颜色和方位，不要猜图里没有的东西。\n"
+              + "只输出 JSON，不要解释、不要用 Markdown 代码块：{\"seen\":\"绵羊\"}";
+
+        var key = settings.CaptchaApiKey?.Trim() ?? "";
+
+        foreach (var model in ResolveModels(settings))
+        {
+            var verdict = await TryModelAsync(endpoint, model, $"验证码判定 #{index}", prompt, png, true, "image/png",
+                key, content => ParseVerdict(content, index), ct);
+
+            if (verdict != null)
+            {
+                RateLimitedAt.TryRemove(model, out _);
+                return verdict;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>拼出 chat/completions 的完整地址。</summary>
+    private static string ResolveEndpoint(AppSettings settings)
+    {
+        var baseUrl = settings.CaptchaApiBaseUrl.Trim().TrimEnd('/');
+        return baseUrl.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)
+            ? baseUrl
+            : $"{baseUrl}/chat/completions";
+    }
+
+    /// <summary>按设置拼出候选模型列表；刚被限流的排到最后。</summary>
+    private static List<string> ResolveModels(AppSettings settings)
+    {
         var models = new List<string> { settings.CaptchaModel.Trim() };
 
         var fallback = settings.CaptchaFallbackModel?.Trim() ?? "";
@@ -82,30 +165,59 @@ public sealed class VisionCaptchaClient
             models.Add(fallback);
         }
 
-        // 刚被限流过的模型排到后面：免费额度一旦打满往往好几分钟不恢复，
-        // 每次都先撞它两轮只会白白拖住验证码窗口。
-        models = models
-            .OrderBy(m => InCooldown(m) ? 1 : 0)
-            .ToList();
+        return models.OrderBy(m => InCooldown(m) ? 1 : 0).ToList();
+    }
 
-        var key = settings.CaptchaApiKey?.Trim() ?? "";
-        CaptchaAnswer? spare = null;
-
-        foreach (var model in models)
+    /// <summary>解析单张候选图的判定结果。</summary>
+    private static TileVerdict? ParseVerdict(string content, int index)
+    {
+        var start = content.IndexOf('{');
+        var end = content.LastIndexOf('}');
+        if (start < 0 || end <= start)
         {
-            var answer = await TryModelAsync(endpoint, model, prompt, jpeg, tileCount, key, ct);
-            if (answer is { IsUsable: true })
-            {
-                RateLimitedAt.TryRemove(model, out _);
-                return answer;
-            }
-
-            // 调通了但一张都没认出来，换模型多半也救不回来；留作兜底结果。
-            spare ??= answer;
+            return null;
         }
 
-        return spare;
+        try
+        {
+            var json = JObject.Parse(content.Substring(start, end - start + 1));
+
+            // seen 是唯一必需的字段：命中与否一律由调用方按题目做匹配。
+            // 模型自己给的 hit 不可信——3B 会把提示词示例里的 true 原样抄回来，六块全「符合」。
+            var seenToken = json["seen"];
+            if (seenToken == null || seenToken.Type == JTokenType.Null)
+            {
+                return null;
+            }
+
+            var seen = seenToken.ToString().Trim();
+
+            // hit 只在模型主动给出时才采信；置信度也一样，缺了给个中性值，不参与选图排序。
+            var hitToken = json["hit"];
+            var hit = hitToken != null && hitToken.Type != JTokenType.Null && (hitToken.Type == JTokenType.Boolean
+                ? (bool)hitToken
+                : hitToken.ToString().Trim().ToLowerInvariant() is "true" or "1" or "是" or "符合");
+
+            var confidence = json["confidence"]?.Type is JTokenType.Float or JTokenType.Integer
+                ? json["confidence"]!.Value<double>()
+                : 0.6;
+
+            return new TileVerdict(index, hit, confidence, seen, content.Trim());
+        }
+        catch
+        {
+            return null;
+        }
     }
+
+    /// <summary>把解析结果压成一行写进主日志，别把整段响应贴进去。</summary>
+    private static string DescribeResult(object result) => result switch
+    {
+        CaptchaAnswer a => $"target={a.Target} picks=[{string.Join(",", a.Picks)}] confidence={a.Confidence:F2}",
+        TileVerdict v => $"#{v.Index} hit={v.Hit} conf={v.Confidence:F2} seen=\"{v.Seen}\"",
+        string s => s.Length <= 120 ? s : s[..120] + "…",
+        _ => result.ToString() ?? ""
+    };
 
     /// <summary>被限流后冷却多久再重新尝试（秒）。</summary>
     private const int CooldownSeconds = 180;
@@ -130,11 +242,15 @@ public sealed class VisionCaptchaClient
         return true;
     }
 
-    /// <summary>对单个模型发一次请求；撞限流或服务端抖动时退避重试。</summary>
-    private async Task<CaptchaAnswer?> TryModelAsync(string endpoint, string model, string prompt,
-        byte[] jpeg, int tileCount, string key, CancellationToken ct)
+    /// <summary>
+    /// 对单个模型发一次请求；撞限流或服务端抖动时退避重试。
+    /// 响应怎么解析交给 <paramref name="parse"/>，读题（纯文本）与逐块判定（JSON）共用这一套重试／剥字段逻辑。
+    /// </summary>
+    private async Task<T?> TryModelAsync<T>(string endpoint, string model, string task, string prompt,
+        byte[] image, bool jsonMode, string mime, string key, Func<string, T?> parse, CancellationToken ct)
+        where T : class
     {
-        var payload = BuildPayload(endpoint, model, prompt, jpeg);
+        var payload = BuildPayload(endpoint, model, prompt, image, jsonMode, mime);
 
         // 429/5xx 的重试次数；400 那种「剥字段重发」不占这个额度。
         const int maxAttempts = 2;
@@ -162,8 +278,8 @@ public sealed class VisionCaptchaClient
                 // 每次真正发出去都单独记一节 AI 日志：完整请求体（图片换成占位符）、完整响应体、
                 // 状态码、耗时，连 400/429 的失败响应也照样落盘，排查时不用猜接口到底回了什么。
                 using var call = AiRequestLogger.Begin(
-                    round > 1 ? $"验证码识别（第 {round} 次尝试）" : "验证码识别",
-                    model, endpoint, payload.ToString(Newtonsoft.Json.Formatting.None), key, _log, jpeg);
+                    round > 1 ? $"{task}（第 {round} 次尝试）" : task,
+                    model, endpoint, payload.ToString(Newtonsoft.Json.Formatting.None), key, _log, image);
 
                 HttpResponseMessage response;
                 string body;
@@ -194,10 +310,10 @@ public sealed class VisionCaptchaClient
                             return null;
                         }
 
-                        var answer = ParseAnswer(content, tileCount);
+                        var answer = parse(content);
                         call?.Success(status, body, answer == null
-                            ? "程序解析失败：回答里没有可用的 JSON"
-                            : $"target={answer.Target} picks=[{string.Join(",", answer.Picks)}] confidence={answer.Confidence}");
+                            ? "程序解析失败：回答里没有可用的内容"
+                            : DescribeResult(answer));
                         return answer;
                     }
 
@@ -271,7 +387,8 @@ public sealed class VisionCaptchaClient
     }
 
     /// <summary>按模型名拼请求体；智谱要显式关掉思考模式，否则会白等好几秒。</summary>
-    private static JObject BuildPayload(string endpoint, string model, string prompt, byte[] jpeg)
+    private static JObject BuildPayload(string endpoint, string model, string prompt, byte[] image,
+        bool jsonMode, string mime)
     {
         var payload = new JObject
         {
@@ -280,8 +397,6 @@ public sealed class VisionCaptchaClient
             ["temperature"] = 0.01,
             // 思考型模型的推理过程也占 token，200 容易被思考吃光、content 变成空串。
             ["max_tokens"] = 800,
-            // 小参数量模型容易加解释或 Markdown 围栏，强制 JSON 能少一层解析失败。
-            ["response_format"] = new JObject { ["type"] = "json_object" },
             ["messages"] = new JArray
             {
                 new JObject
@@ -295,7 +410,7 @@ public sealed class VisionCaptchaClient
                             ["type"] = "image_url",
                             ["image_url"] = new JObject
                             {
-                                ["url"] = "data:image/jpeg;base64," + Convert.ToBase64String(jpeg),
+                                ["url"] = $"data:{mime};base64," + Convert.ToBase64String(image),
                                 ["detail"] = "high"
                             }
                         }
@@ -303,6 +418,13 @@ public sealed class VisionCaptchaClient
                 }
             }
         };
+
+        // 只有要 JSON 的任务才强制 response_format。读题要的是纯文本，
+        // 加了反而可能让模型把整句话塞进 JSON 字符串里，解析时多一层要剥的东西。
+        if (jsonMode)
+        {
+            payload["response_format"] = new JObject { ["type"] = "json_object" };
+        }
 
         if (endpoint.Contains("bigmodel.cn", StringComparison.OrdinalIgnoreCase))
         {
@@ -378,47 +500,6 @@ public sealed class VisionCaptchaClient
     private static bool IsEmptyText(JToken? token)
         => token == null
            || (token.Type == JTokenType.String && string.IsNullOrWhiteSpace(token.ToString()));
-
-    /// <summary>从模型回答里抠出 JSON 并解析成识别结果。</summary>
-    public static CaptchaAnswer? ParseAnswer(string content, int tileCount)
-    {
-        var start = content.IndexOf('{');
-        var end = content.LastIndexOf('}');
-        if (start < 0 || end <= start)
-        {
-            return null;
-        }
-
-        try
-        {
-            var json = JObject.Parse(content.Substring(start, end - start + 1));
-            var target = json["target"]?.ToString() ?? "";
-            var confidence = json["confidence"]?.Type == JTokenType.Float
-                ? (double)json["confidence"]!
-                : 0;
-
-            var picks = new List<int>();
-            if (json["picks"] is JArray array)
-            {
-                foreach (var item in array)
-                {
-                    if (int.TryParse(item.ToString(), out var index) && index >= 1 && index <= tileCount)
-                    {
-                        if (!picks.Contains(index))
-                        {
-                            picks.Add(index);
-                        }
-                    }
-                }
-            }
-
-            return new CaptchaAnswer(target, picks, confidence, content.Trim());
-        }
-        catch
-        {
-            return null;
-        }
-    }
 
     /// <summary>截断长文本，日志里不要贴整段响应。</summary>
     private static string Trim(string text, int max) =>

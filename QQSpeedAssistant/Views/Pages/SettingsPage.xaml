@@ -488,7 +488,22 @@
             <!-- 登录验证码（自动过码） -->
             <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
-                    <TextBlock Text="登录验证码（自动过码）" Style="{StaticResource SectionTitle}" />
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="登录验证码（自动过码）" Style="{StaticResource SectionTitle}" Margin="0" />
+                        <Button Grid.Column="1"
+                                Content="▶ 接口地址／模型怎么填？"
+                                Style="{StaticResource HintButton}"
+                                Padding="12,5"
+                                FontSize="12"
+                                Margin="0"
+                                VerticalAlignment="Center"
+                                ToolTip="列出可直接使用的免费接口方案，点一下就把地址和模型填进设置"
+                                Command="{Binding OpenAiEndpointHelpCommand}" />
+                    </Grid>
 
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
@@ -513,15 +528,20 @@
                             <ColumnDefinition Width="320" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="识别接口地址" Style="{StaticResource FieldLabel}" />
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="识别接口地址" Style="{StaticResource FieldLabel}" />
+                            <Button Content="怎么填？"
+                                    Style="{StaticResource HintSmallButton}"
+                                    ToolTip="打开说明：列出免费方案与模型名，可一键填入"
+                                    Command="{Binding OpenAiEndpointHelpCommand}" />
+                        </StackPanel>
                         <TextBox Grid.Column="1"
                                  Text="{Binding Settings.CaptchaApiBaseUrl, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
                         <TextBlock Grid.Column="2"
-                                   Text="OpenAI 兼容地址，程序会自动补 /chat/completions。默认智谱（长期免费）：https://open.bigmodel.cn/api/paas/v4"
                                    Style="{StaticResource Muted}"
                                    VerticalAlignment="Center"
                                    TextWrapping="Wrap"
-                                   Margin="12,0,0,0" />
+                                   Margin="12,0,0,0"><Run Text="OpenAI 兼容地址，程序会自动补 /chat/completions。点上面的" /><Run Text="「怎么填？」" Foreground="#FF6B6B" FontWeight="SemiBold" /><Run Text="有现成方案，选好一键填入" /></TextBlock>
                     </Grid>
 
                     <Grid Margin="0,0,0,10">
@@ -551,7 +571,7 @@
                         <TextBox Grid.Column="1"
                                  Text="{Binding Settings.CaptchaModel, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
                         <TextBlock Grid.Column="2"
-                                   Text="必须支持图片输入。默认 glm-4.6v-flash（免费）；其他可用 glm-4v-flash、Qwen/Qwen3-VL-30B-A3B-Instruct 等"
+                                   Text="必须支持图片输入。默认 glm-4.6v-flash（免费）；其他模型名在「怎么填？」里按平台列好了，可点选填入"
                                    Style="{StaticResource Muted}"
                                    VerticalAlignment="Center"
                                    TextWrapping="Wrap"
@@ -635,7 +655,24 @@
                                   IsChecked="{Binding Settings.AiRequestLogEnabled, Mode=TwoWay}"
                                   VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1"
-                                   Text="每次模型请求单独写一节：完整请求体、完整响应体、状态码、耗时，存到 User/log/ai/；请求里的图片另存在 media 子目录（日志保留 14 天，图片 7 天）"
+                                   Text="每次模型请求单独写一节：完整请求体、完整响应体、状态码、耗时。存到 User/log/ai/日期/，请求里的图片放在同一天的 media 子目录，一天一个文件夹"
+                                   Style="{StaticResource Muted}"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   Margin="12,0,0,0" />
+                    </Grid>
+
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="176" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="日志保留天数" Style="{StaticResource FieldLabel}" />
+                        <TextBox Grid.Column="1"
+                                 Text="{Binding Settings.AiLogRetainDays, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                        <TextBlock Grid.Column="2"
+                                   Text="超过这个天数的 AI 日志（正文和图片一整个目录）、运行日志、调试截图会自动删除；填 0 表示永不清理"
                                    Style="{StaticResource Muted}"
                                    VerticalAlignment="Center"
                                    TextWrapping="Wrap"

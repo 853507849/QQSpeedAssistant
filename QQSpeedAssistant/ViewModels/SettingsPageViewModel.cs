@@ -225,6 +225,23 @@ public sealed partial class SettingsPageViewModel : ObservableObject
     [RelayCommand]
     private void OpenAiLogFolder() => OpenFolder(AiRequestLogger.LogDir);
 
+    /// <summary>打开「接口地址和模型怎么填」说明窗：里面列了可直接用的免费方案，点一下就能填进设置。</summary>
+    [RelayCommand]
+    private void OpenAiEndpointHelp()
+    {
+        var window = new Views.Windows.AiEndpointHelpWindow(
+            new AiEndpointHelpViewModel(Settings, _services.Config.SaveSettings))
+        {
+            Owner = System.Windows.Application.Current?.MainWindow
+        };
+
+        window.ShowDialog();
+
+        // 说明窗里「一键填入」是直接改 AppSettings 的，属性变更会推到界面上的输入框，
+        // 这里只补一句提示，引导用户去验证。
+        StatusMessage = "接口设置改过的话，回「登录验证码」区点「测试验证码识别」验证一下";
+    }
+
     /// <summary>打开流程目录。</summary>
     [RelayCommand]
     private void OpenFlowFolder() => OpenFolder(PathService.FlowDir);
@@ -287,6 +304,17 @@ public sealed partial class SettingsPageViewModel : ObservableObject
         }
 
         _services.Config.SaveSettings();
+
+        // 改保留天数时把清理结果报出来，否则用户不知道该不该期待「磁盘一下空出来」。
+        if (propertyName == nameof(AppSettings.AiLogRetainDays))
+        {
+            var purge = LogRetention.LastResult;
+            StatusMessage = purge.IsEmpty
+                ? $"已保存：保留 {Settings.AiLogRetainDays} 天，当前没有需要清理的内容"
+                : $"已保存：清理 {purge.Days} 天旧日志、{purge.Files} 个过期文件，释放 {purge.Megabytes:F1} MB";
+            return;
+        }
+
         StatusMessage = $"已自动保存（{DateTime.Now:HH:mm:ss}）";
     }
 
