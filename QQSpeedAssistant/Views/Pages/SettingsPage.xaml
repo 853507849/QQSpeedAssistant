@@ -26,17 +26,35 @@
                                VerticalAlignment="Center"
                                Margin="14,0,0,0" />
                 </StackPanel>
+
+                <!-- 锚点：页面很长，点这里直接滚到对应模块（钉在顶栏，滚到底也能一键回跳） -->
+                <WrapPanel Margin="0,12,0,0">
+                    <TextBlock Text="快速定位"
+                               Style="{StaticResource Muted}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0" />
+                    <Button Content="账号与顺序" Style="{StaticResource SmallButton}" Tag="CardAccount" Click="OnAnchorClick" />
+                    <Button Content="定时上下号" Style="{StaticResource SmallButton}" Tag="CardSchedule" Click="OnAnchorClick" />
+                    <Button Content="票完动作" Style="{StaticResource SmallButton}" Tag="CardFinish" Click="OnAnchorClick" />
+                    <Button Content="预设与自启" Style="{StaticResource SmallButton}" Tag="CardPreset" Click="OnAnchorClick" />
+                    <Button Content="性能与多开" Style="{StaticResource SmallButton}" Tag="CardPerformance" Click="OnAnchorClick" />
+                    <Button Content="号池与容错" Style="{StaticResource SmallButton}" Tag="CardPool" Click="OnAnchorClick" />
+                    <Button Content="登录与大区" Style="{StaticResource SmallButton}" Tag="CardLogin" Click="OnAnchorClick" />
+                    <Button Content="验证码" Style="{StaticResource SmallButton}" Tag="CardCaptcha" Click="OnAnchorClick" />
+                    <Button Content="客户端" Style="{StaticResource SmallButton}" Tag="CardClient" Click="OnAnchorClick" />
+                    <Button Content="操作节奏" Style="{StaticResource SmallButton}" Tag="CardRhythm" Click="OnAnchorClick" />
+                </WrapPanel>
             </StackPanel>
         </Border>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,0,0">
+        <ScrollViewer x:Name="ContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,0,0">
             <StackPanel Margin="26,16,26,24">
 
                 <TextBlock Text="所有修改会自动保存。号池并发、票完动作、定时下号、快速登录、开机自启与预设方案都在这里配置"
                            Style="{StaticResource PageSubtitle}" />
 
             <!-- 账号与顺序 -->
-            <Border Style="{StaticResource Card}" Margin="0,18,0,14">
+            <Border x:Name="CardAccount" Style="{StaticResource Card}" Margin="0,18,0,14">
                 <StackPanel>
                     <TextBlock Text="账号与顺序" Style="{StaticResource SectionTitle}" />
 
@@ -75,7 +93,7 @@
             </Border>
 
             <!-- 定时与关机 -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardSchedule" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="定时上号 / 定时下号" Style="{StaticResource SectionTitle}" />
 
@@ -142,7 +160,7 @@
             </Border>
 
             <!-- 票完动作 -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardFinish" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="票完动作（全部账号跑完后做什么）" Style="{StaticResource SectionTitle}" />
 
@@ -201,7 +219,7 @@
             </Border>
 
             <!-- 预设与开机 -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardPreset" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="预设方案与开机自启" Style="{StaticResource SectionTitle}" />
 
@@ -262,7 +280,7 @@
             </Border>
 
             <!-- 性能与多开 -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardPerformance" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="性能与多开" Style="{StaticResource SectionTitle}" />
 
@@ -319,7 +337,7 @@
             </Border>
 
             <!-- 号池与容错 -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardPool" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="号池顶替与容错" Style="{StaticResource SectionTitle}" />
 
@@ -428,7 +446,7 @@
             </Border>
 
             <!-- 登录与大区 -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardLogin" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="登录方式与大区" Style="{StaticResource SectionTitle}" />
 
@@ -486,7 +504,7 @@
             </Border>
 
             <!-- 登录验证码（自动过码） -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardCaptcha" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
@@ -691,7 +709,7 @@
             </Border>
 
             <!-- 客户端与窗口 -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardClient" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="客户端与窗口" Style="{StaticResource SectionTitle}" />
 
@@ -808,7 +826,7 @@
             </Border>
 
             <!-- 操作节奏 -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+            <Border x:Name="CardRhythm" Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="操作节奏" Style="{StaticResource SectionTitle}" />
 
