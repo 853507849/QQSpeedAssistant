@@ -33,64 +33,6 @@
                 </StackPanel>
             </Grid>
 
-            <!-- 游戏客户端 -->
-            <Border Style="{StaticResource Card}" Margin="0,16,0,0">
-                <StackPanel>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="游戏客户端" Style="{StaticResource SectionTitle}" Margin="0,0,0,10" />
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,-2,0,0">
-                            <Button Content="启动游戏"
-                                    Style="{StaticResource PrimaryButton}"
-                                    Command="{Binding LaunchGameCommand}"
-                                    IsEnabled="{Binding CanLaunchGame, Mode=OneWay}" />
-                            <Button Content="登录测试"
-                                    Command="{Binding TestLoginCommand}"
-                                    IsEnabled="{Binding CanTestLogin, Mode=OneWay}"
-                                    Margin="8,0,0,0" />
-                            <Button Content="检测窗口"
-                                    Command="{Binding RefreshGameStatusCommand}"
-                                    Margin="8,0,0,0" />
-                            <Button Content="输入自检"
-                                    Command="{Binding InputSelfCheckCommand}"
-                                    ToolTip="只移动光标不点击：检查权限、显示器缩放、多屏导致的坐标偏移，结论写进日志"
-                                    Margin="8,0,0,0" />
-                            <Button Content="控件探测"
-                                    Command="{Binding ProbeControlsCommand}"
-                                    ToolTip="用 UI Automation 列出游戏窗口里的控件，判断能否直接给输入框赋值（不发鼠标键盘）"
-                                    Margin="8,0,0,0" />
-                            <Button Content="管理员运行"
-                                    Style="{StaticResource DangerButton}"
-                                    Command="{Binding RestartAsAdminCommand}"
-                                    ToolTip="游戏以管理员运行时，本程序也必须提权，否则点击与输入会被系统丢弃"
-                                    Margin="8,0,0,0" />
-                        </StackPanel>
-                    </Grid>
-
-                    <Grid Margin="0,0,0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="96" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="主程序 / 目录" Style="{StaticResource FieldLabel}" />
-                        <TextBox Grid.Column="1"
-                                 Text="{Binding GameExePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <StackPanel Grid.Column="2" Orientation="Horizontal">
-                            <Button Content="选择 exe" Command="{Binding BrowseGameExeCommand}" Margin="8,0,0,0" />
-                            <Button Content="选择目录" Command="{Binding ChooseGameFolderCommand}" Margin="8,0,0,0" />
-                        </StackPanel>
-                    </Grid>
-
-                    <TextBlock Text="{Binding GameStatusText, Mode=OneWay}"
-                               Style="{StaticResource Muted}"
-                               TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
-
             <!-- 状态卡片 -->
             <Grid Margin="0,20,0,0">
                 <Grid.ColumnDefinitions>

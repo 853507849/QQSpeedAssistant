@@ -114,40 +114,6 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
-    /// 按配置启动一个客户端并接管其窗口，供主页「启动游戏」使用；失败返回 null。
-    /// </summary>
-    public async Task<GameSession?> LaunchAndAttachAsync(CancellationToken ct)
-    {
-        // 已经接管过窗口就直接复用：再拉一个客户端既会抢焦点，起动器还多半是单实例的根本不会新开窗口。
-        var ready = _sessions.FirstOrDefault();
-        if (ready != null)
-        {
-            _log.Info($"已有接管的游戏窗口（{ready.Title}，进程 {ready.ProcessName}），直接复用，不再启动新客户端", "窗口");
-            return ready;
-        }
-
-        // 有现成但还没接管的窗口时直接接管，避免重复启动客户端。
-        var existing = TryAttachNew();
-        if (existing != null)
-        {
-            return existing;
-        }
-
-        if (!await LaunchAsync(ct))
-        {
-            return null;
-        }
-
-        var session = TryAttachNew();
-        if (session == null)
-        {
-            _log.Warn("客户端已启动，但暂时没有可接管的窗口（可能仍在加载），稍后可再点「检测窗口」", "窗口");
-        }
-
-        return session;
-    }
-
-    /// <summary>
     /// 解析配置中的游戏路径：既支持直接填客户端 exe，也支持填安装目录（自动在目录内找主程序）。
     /// </summary>
     /// <param name="exePath">解析出的客户端 exe 全路径。</param>
