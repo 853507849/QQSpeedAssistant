@@ -784,6 +784,13 @@ public sealed class CaptchaService
 
         if (confirmed.Count == 0)
         {
+            if (lookForText)
+            {
+                _log.Warn("藏字题没认出来。实测 3B 级小模型读这种淡叠字，换问法、加边缘掩码、按笔画紧裁放大"
+                          + "都只会给出同一个字，属模型能力上限——建议把更强的视觉模型填到「备用模型」"
+                          + "（这类题目会自动优先用它），或直接人工过码", account);
+            }
+
             _log.Info("复核同样没找到符合的，按原判定处理", account);
             return judged;
         }

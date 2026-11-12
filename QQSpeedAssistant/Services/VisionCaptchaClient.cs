@@ -115,7 +115,7 @@ public sealed class VisionCaptchaClient
 
         var key = settings.CaptchaApiKey?.Trim() ?? "";
 
-        foreach (var model in ResolveModels(settings))
+        foreach (var model in ResolveModels(settings, preferFallback: lookForText))
         {
             var verdict = await TryModelAsync(endpoint, model, $"验证码判定 #{index}", prompt, png, true, "image/png",
                 key, content => ParseVerdict(content, index), ct);
@@ -145,7 +145,7 @@ public sealed class VisionCaptchaClient
         var prompt = BuildConfirmPrompt(target, lookForText);
         var key = settings.CaptchaApiKey?.Trim() ?? "";
 
-        foreach (var model in ResolveModels(settings))
+        foreach (var model in ResolveModels(settings, preferFallback: lookForText))
         {
             var verdict = await TryModelAsync(endpoint, model, $"验证码复核 #{index}", prompt, png, true, "image/png",
                 key, content => ParseConfirm(content, index), ct);
@@ -212,7 +212,13 @@ public sealed class VisionCaptchaClient
     }
 
     /// <summary>按设置拼出候选模型列表；刚被限流的排到最后。</summary>
-    private static List<string> ResolveModels(AppSettings settings)
+    /// <param name="preferFallback">
+    /// 是否优先用备用模型。藏字题（包含文字 X）对 3B 这类小模型基本无解——实测换六种问法、
+    /// 加边缘掩码、按笔画紧裁放大，输出全部退化成同一个字（山/空），而同一模型读印刷体汉字
+    /// 却基本全对，说明是画面里那个淡字形超出它的能力。用户通常把更强的模型填在备用位，
+    /// 所以这类题目先让备用上。
+    /// </param>
+    private static List<string> ResolveModels(AppSettings settings, bool preferFallback = false)
     {
         var models = new List<string> { settings.CaptchaModel.Trim() };
 
@@ -220,6 +226,11 @@ public sealed class VisionCaptchaClient
         if (fallback.Length > 0 && !string.Equals(fallback, models[0], StringComparison.OrdinalIgnoreCase))
         {
             models.Add(fallback);
+        }
+
+        if (preferFallback)
+        {
+            models.Reverse();
         }
 
         return models.OrderBy(m => InCooldown(m) ? 1 : 0).ToList();
