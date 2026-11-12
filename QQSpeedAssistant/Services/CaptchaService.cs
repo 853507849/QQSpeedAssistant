@@ -760,7 +760,10 @@ public sealed class CaptchaService
             return judged;
         }
 
-        _log.Info($"六张都判为不符合，改问「图里有没有「{target}」」复核 {misses.Count} 张", account);
+        // 说清楚「没有第二遍裁图」：复核送的是上面已经裁好的那批 PNG，只是又问了模型一遍。
+        // 不写这句的话，看到 media 目录里同样的图出现两组，很容易以为程序重复裁了一遍。
+        _log.Info($"{misses.Count} 张都没判为符合，用已经裁好的同一批图再问一遍「图里有没有「{target}」」"
+                  + $"（多 {misses.Count} 次请求，不重新裁图）", account);
 
         var confirmed = new List<TileVerdict>();
         foreach (var miss in misses)
