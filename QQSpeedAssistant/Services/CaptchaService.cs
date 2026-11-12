@@ -169,9 +169,9 @@ public sealed class CaptchaService
             var answer = await RecognizeAsync(image, grid, settings, account, ct);
             if (answer == null || !answer.IsUsable)
             {
-                _log.Warn($"第 {attempt} 次：逐块判定没得到可用结果（{answer?.Raw ?? "无响应"}），稍后重试", account);
+                _log.Warn($"第 {attempt} 次：逐块判定没得到可用结果（{answer?.Raw ?? "无响应"}），刷新换图后重试", account);
                 SaveDebug(image, annotated, "answer");
-                await Task.Delay(1200, ct);
+                window = await RefreshCaptchaAsync(window, settings, account, ct);
                 continue;
             }
 
@@ -189,11 +189,11 @@ public sealed class CaptchaService
                 }
 
                 _log.Warn($"第 {attempt} 次：{doubt}（模型给的：题目「{answer.Target}」→ "
-                          + $"第 {string.Join("、", answer.Picks)} 张），这次不提交，重拍后重识别", account);
+                          + $"第 {string.Join("、", answer.Picks)} 张），这次不提交，刷新换图后重识别", account);
 
                 // 读不准不算一次答题，把这次机会还回去；读不准的次数由 readFailures 单独兜底。
                 attempt--;
-                await Task.Delay(1400, ct);
+                window = await RefreshCaptchaAsync(window, settings, account, ct);
                 continue;
             }
 
@@ -226,12 +226,8 @@ public sealed class CaptchaService
 
             if (CaptchaWindowLocator.Find(settings) != null)
             {
-                _log.Warn($"第 {attempt} 次提交后验证码窗口还在，按答错换图重新识别", account);
-                await Task.Delay(800, ct);
-                window = CaptchaWindowLocator.Find(settings) ?? window;
-
-                // 换图同样是异步加载的，等新图出现再进下一轮，否则会拿上一张的残影去识别。
-                window = await WaitTilesReadyAsync(window, _log, account, ct);
+                _log.Warn($"第 {attempt} 次提交后验证码窗口还在：答错了，点「刷新」换一张再识别", account);
+                window = await RefreshCaptchaAsync(window, settings, account, ct);
                 continue;
             }
 
@@ -419,17 +415,108 @@ public sealed class CaptchaService
     }
 
     /// <summary>
+    /// 答错或识别不出来时，点「确定」旁边的刷新图标换一张验证码再识别。
+    /// 之前只是干等一下再抓图：QQ 不换图的话，同一张图会被反复识别、反复提交同一个错答案。
+    /// 这里不去猜「是不是已经自动换过了」——答错后选中框、错误提示都会让画面变化，比不准；
+    /// 索性一律刷新，刷完还跟原来一样就再点一次，两次都不行就退回主循环按原样重试。
+    /// </summary>
+    private async Task<CaptchaWindowInfo> RefreshCaptchaAsync(CaptchaWindowInfo window,
+        AppSettings settings, string account, CancellationToken ct)
+    {
+        await Task.Delay(600, ct);
+
+        var found = CaptchaWindowLocator.Find(settings);
+        if (found == null)
+        {
+            // 窗口已经自己关了（答对或被顶掉），交给主循环去判结果，这里不要乱点。
+            return window;
+        }
+
+        window = CaptchaWindowLocator.Refresh(found);
+
+        for (var round = 1; round <= 2; round++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            using var shot = CaptureForTiles(window, null, out var shotTiles);
+            if (shot == null || shot.Empty() || shotTiles < 2)
+            {
+                return window;
+            }
+
+            var grid = CaptchaGrid.Detect(shot);
+            if (grid.Tiles.Count == 0)
+            {
+                return window;
+            }
+
+            // 刷新图标是普通按钮，窗口不在前台会被点到别处。
+            NativeMethods.Activate(window.Handle);
+            await Task.Delay(200, ct);
+
+            var gridTop = grid.Tiles.Min(t => t.Y);
+            if (!ClickRefresh(window, shot, gridTop, grid.ContentBox))
+            {
+                _log.Warn("没找到「确定」左边的刷新按钮（窗口布局可能变了），只能等它自己换图", account);
+                return window;
+            }
+
+            _log.Info($"已点「刷新」换图（第 {round} 次）", account);
+
+            // 换图同样是异步拉取的，等新图稳定再交给主循环识别，否则会拿着上一张的残影去识别。
+            await Task.Delay(1200, ct);
+            window = CaptchaWindowLocator.Refresh(window);
+            window = await WaitTilesReadyAsync(window, _log, account, ct);
+
+            using var after = CaptureForTiles(window, null, out var afterTiles);
+            if (after == null || afterTiles < 2 || !IsSameFrame(shot, after))
+            {
+                return window;
+            }
+
+            _log.Warn($"第 {round} 次刷新后画面没变", account);
+        }
+
+        return window;
+    }
+
+    /// <summary>
     /// 点「确定」按钮。按钮是蓝色圆角块，用颜色定位；找不到返回 false（调用方退回按回车）。
     /// </summary>
     public static bool ClickConfirm(CaptchaWindowInfo window, Mat image, int maxY, Rect? renderBox = null)
     {
-        var point = FindConfirmButton(image, maxY);
-        if (point == null)
+        var rect = FindConfirmButtonRect(image, maxY);
+        if (rect == null)
         {
             return false;
         }
 
-        return CaptchaWindowLocator.ClickImagePoint(window, image, point.Value.X, point.Value.Y, renderBox);
+        var x = rect.Value.X + rect.Value.Width / 2;
+        var y = rect.Value.Y + rect.Value.Height / 2;
+        return CaptchaWindowLocator.ClickImagePoint(window, image, x, y, renderBox);
+    }
+
+    /// <summary>
+    /// 点「确定」左边那个刷新图标，换一张验证码。
+    /// 答错后 QQ 不一定自动换图，一直识别同一张只会一直给出同一个错答案，必须主动刷新。
+    /// 图标紧挨按钮左侧、与按钮大致同高，所以按「确定」的外接矩形按比例推出坐标，窗口缩放也能点到。
+    /// </summary>
+    public static bool ClickRefresh(CaptchaWindowInfo window, Mat image, int maxY, Rect? renderBox = null)
+    {
+        var rect = FindConfirmButtonRect(image, maxY);
+        if (rect == null)
+        {
+            return false;
+        }
+
+        var x = rect.Value.X - (int)Math.Round(rect.Value.Height * 0.85);
+        var y = rect.Value.Y + rect.Value.Height / 2;
+        if (x <= 0)
+        {
+            return false;
+        }
+
+        return CaptchaWindowLocator.ClickImagePoint(window, image, x, y, renderBox);
     }
 
     /// <summary>
@@ -437,6 +524,17 @@ public sealed class CaptchaService
     /// maxY 用来限制只在图块上方找：海景、天空这类照片本身也是蓝色，不限制就会点到图里去。
     /// </summary>
     public static Point? FindConfirmButton(Mat image, int maxY = int.MaxValue)
+    {
+        var rect = FindConfirmButtonRect(image, maxY);
+        return rect == null
+            ? null
+            : new Point(rect.Value.X + rect.Value.Width / 2, rect.Value.Y + rect.Value.Height / 2);
+    }
+
+    /// <summary>
+    /// 「确定」按钮的外接矩形。刷新按钮要靠它推坐标，所以除了中心点还要留着尺寸。
+    /// </summary>
+    public static Rect? FindConfirmButtonRect(Mat image, int maxY = int.MaxValue)
     {
         if (image.Empty())
         {
@@ -452,7 +550,7 @@ public sealed class CaptchaService
 
         Cv2.FindContours(mask, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
 
-        Point? best = null;
+        Rect? best = null;
         var bestWidth = 0;
         foreach (var contour in contours)
         {
@@ -476,7 +574,7 @@ public sealed class CaptchaService
             if (rect.Width > bestWidth)
             {
                 bestWidth = rect.Width;
-                best = new Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+                best = rect;
             }
         }
 
