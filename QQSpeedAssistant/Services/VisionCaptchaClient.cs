@@ -111,22 +111,7 @@ public sealed class VisionCaptchaClient
     {
         var endpoint = ResolveEndpoint(settings);
 
-        // 三个坑，全是实测踩出来的：
-        // ① 问「这张图符不符合题目」这种抽象判断，3B 会敷衍——一律回 false、confidence 0.01；
-        // ② 把题目里的词（「绵羊」）写进单块提示词，3B 会顺着题目答：实测沙漠日落、海滩日落两张
-        //    都被它报成「绵羊」，六张里只有一张真是羊。所以目标词一个字都不能出现在提示词里；
-        // ③ JSON 示例里写 "hit":true，它会把这个模板值原样抄回来，于是六块全「符合」。
-        // 结论：只问事实（图里是什么/什么字），判断留给调用方做字符串匹配。
-        var prompt = lookForText
-            ? "这是一张 QQ 登录验证码里的候选图。\n"
-              + "图里可能叠着一个很淡、半透明的汉字（有时是用景物拼出来的字形），也可能没有。\n"
-              + "只回答一件事：你辨认到的汉字是什么？一个字都没辨认到就留空，不要猜、不要编。\n"
-              + "只输出 JSON，不要解释、不要用 Markdown 代码块：{\"seen\":\"个\"}"
-            : "这是一张 QQ 登录验证码里的候选图。\n"
-              + "只回答一件事：这张图里最主要的东西是什么？\n"
-              + "只写名称，不超过 4 个字（例如「绵羊」「麦田」「橙子」「沙漠」），"
-              + "不要写句子、不要写颜色和方位，不要猜图里没有的东西。\n"
-              + "只输出 JSON，不要解释、不要用 Markdown 代码块：{\"seen\":\"绵羊\"}";
+        var prompt = BuildTilePrompt(lookForText);
 
         var key = settings.CaptchaApiKey?.Trim() ?? "";
 
@@ -144,6 +129,78 @@ public sealed class VisionCaptchaClient
 
         return null;
     }
+
+    /// <summary>
+    /// 第二道复核：把题目要找的目标词直接告诉模型，问它这张图里有没有，只要一个是/否。
+    /// 只在「逐块报看到什么」判出零命中之后才调用——这条问法是有代价的：
+    /// 目标词进了提示词，模型报回来的 seen 会被带偏（实测问「足球」时六张里四张把 seen 写成「足球」，
+    /// 而那些图里并没有足球），所以这里**只采信 has，绝不拿 seen 去比对**。
+    /// 反过来的好处是：目标在画面里、但不是最显眼的东西时（紫色盘子被说成「叉子」），
+    /// 只有这种问法救得回来。实测 18 次判定（含目标完全不存在的一轮）全对，没有出现一律答 true。
+    /// </summary>
+    public async Task<TileVerdict?> ConfirmTileAsync(byte[] png, string target, bool lookForText, int index,
+        AppSettings settings, CancellationToken ct)
+    {
+        var endpoint = ResolveEndpoint(settings);
+        var prompt = BuildConfirmPrompt(target, lookForText);
+        var key = settings.CaptchaApiKey?.Trim() ?? "";
+
+        foreach (var model in ResolveModels(settings))
+        {
+            var verdict = await TryModelAsync(endpoint, model, $"验证码复核 #{index}", prompt, png, true, "image/png",
+                key, content => ParseConfirm(content, index), ct);
+
+            if (verdict != null)
+            {
+                RateLimitedAt.TryRemove(model, out _);
+                return verdict;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 单张候选图的第一道问法：只问「你看到什么」，一个字都不提题目。
+    /// 三个坑，全是实测踩出来的：
+    /// ① 问「这张图符不符合题目」这种抽象判断，3B 会敷衍——一律回 false、confidence 0.01；
+    /// ② 把题目里的词（「绵羊」）写进单块提示词，3B 会顺着题目答：实测沙漠日落、海滩日落两张
+    ///    都被它报成「绵羊」，六张里只有一张真是羊；
+    /// ③ JSON 示例里给出具体取值，它会把这个示例值原样抄回来——写 "hit":true 就六块全「符合」，
+    ///    写 {"seen":"个"} 就六块全报「个」（2026-11-12 实测，藏字题 6/6 全是「个」，一次都没真看）。
+    /// 所以：示例值一律留空串，只问事实（图里是什么/什么字），判断留给调用方做字符串匹配。
+    /// </summary>
+    private static string BuildTilePrompt(bool lookForText)
+        => lookForText
+            ? "这是一张 QQ 登录验证码里的候选图。\n"
+              + "图里可能叠着一个很淡、半透明的汉字（有时是用景物拼出来的字形），也可能没有。\n"
+              + "只回答一件事：你辨认到的汉字是什么？一个字都没辨认到就留空，不要猜、不要编。\n"
+              + "seen 填你辨认到的那个字；示例里的空字符串只是格式示意，不是答案。\n"
+              + "只输出 JSON，不要解释、不要用 Markdown 代码块：{\"seen\":\"\"}"
+            : "这是一张 QQ 登录验证码里的候选图。\n"
+              + "只回答一件事：这张图里最主要的东西是什么？\n"
+              + "只写名称，不超过 4 个字，不要写句子、不要写颜色和方位，不要猜图里没有的东西。\n"
+              + "seen 填你看到的名称；示例里的空字符串只是格式示意，不是答案。\n"
+              + "只输出 JSON，不要解释、不要用 Markdown 代码块：{\"seen\":\"\"}";
+
+    /// <summary>
+    /// 复核问法：把目标词摆出来问有／没有。
+    /// 两处克制：示例里 has 写 false（往「没有」的方向偏，宁可漏判也不错判），
+    /// 并要求先报看到什么再判断，避免模型不看图直接答。
+    /// </summary>
+    private static string BuildConfirmPrompt(string target, bool lookForText)
+        => lookForText
+            ? "这是一张 QQ 登录验证码里的候选图。\n"
+              + "图里可能叠着一个很淡、半透明的汉字（有时是用景物拼出来的字形），也可能没有。\n"
+              + $"题目要找的字是「{target}」。\n"
+              + "先说你辨认到的字是什么（一个字都没辨认到就留空），再判断是不是题目要找的字。\n"
+              + "seen 填你辨认到的字，has 只填 true 或 false。\n"
+              + "只输出 JSON，不要解释、不要用 Markdown 代码块：{\"seen\":\"\",\"has\":false}"
+            : "这是一张 QQ 登录验证码里的候选图。\n"
+              + $"题目要找的是「{target}」。\n"
+              + "先看这张图里最主要的东西是什么，再判断它是不是题目要找的东西。\n"
+              + "seen 填你看到的东西（不超过 4 个字），has 只填 true 或 false。\n"
+              + "只输出 JSON，不要解释、不要用 Markdown 代码块：{\"seen\":\"\",\"has\":false}";
 
     /// <summary>拼出 chat/completions 的完整地址。</summary>
     private static string ResolveEndpoint(AppSettings settings)
@@ -203,6 +260,46 @@ public sealed class VisionCaptchaClient
                 : 0.6;
 
             return new TileVerdict(index, hit, confidence, seen, content.Trim());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 解析复核结果。只看 has：这条问法下 seen 会被题目里的目标词带偏，不能拿来比对。
+    /// 模型漏了 has（可能只回了 seen）时按「没有」处理——复核本来就是给漏判兜底的，宁缺勿错。
+    /// </summary>
+    private static TileVerdict? ParseConfirm(string content, int index)
+    {
+        var start = content.IndexOf('{');
+        var end = content.LastIndexOf('}');
+        if (start < 0 || end <= start)
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = JObject.Parse(content.Substring(start, end - start + 1));
+
+            var hasToken = json["has"];
+            var seenToken = json["seen"];
+            if (hasToken == null && seenToken == null)
+            {
+                return null;
+            }
+
+            var has = hasToken != null && hasToken.Type != JTokenType.Null && (hasToken.Type == JTokenType.Boolean
+                ? (bool)hasToken
+                : hasToken.ToString().Trim().ToLowerInvariant() is "true" or "1" or "是" or "有");
+
+            var confidence = json["confidence"]?.Type is JTokenType.Float or JTokenType.Integer
+                ? json["confidence"]!.Value<double>()
+                : 0.5;
+
+            return new TileVerdict(index, has, confidence, seenToken?.ToString().Trim() ?? "", content.Trim());
         }
         catch
         {

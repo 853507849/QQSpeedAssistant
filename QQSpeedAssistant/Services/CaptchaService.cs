@@ -623,6 +623,10 @@ public sealed class CaptchaService
         var lookForText = literal != null;
 
         var verdicts = new List<TileVerdict>();
+
+        // 零命中时要拿同一张图再问一次「有没有」，先把 PNG 留住，免得到时重裁一遍。
+        var tilePngs = new List<(int Index, byte[] Png)>();
+
         foreach (var tile in grid.Tiles)
         {
             ct.ThrowIfCancellationRequested();
@@ -634,8 +638,10 @@ public sealed class CaptchaService
                 continue;
             }
 
-            var verdict = await _vision.CheckTileAsync(CaptchaGrid.EncodePng(tileImage), lookForText, tile.Index,
-                settings, ct);
+            var png = CaptchaGrid.EncodePng(tileImage);
+            tilePngs.Add((tile.Index, png));
+
+            var verdict = await _vision.CheckTileAsync(png, lookForText, tile.Index, settings, ct);
             if (verdict != null)
             {
                 verdicts.Add(verdict);
@@ -668,7 +674,14 @@ public sealed class CaptchaService
                          + $"{(v.Seen.Length > 0 ? $"「{v.Seen}」" : "「」")}"
                          + $"(匹配度 {MatchStrength(v.Seen, target)})")), account);
 
-        var answer = Decide(question, verdicts);
+        // 零命中不直接认输：多半不是图里没有，而是「有但不显眼」——实测紫色盘子那张被报成「叉子」，
+        // 叉子就摆在盘子上。这时候才允许把目标词交给模型问一次有／没有。
+        if (!judged.Any(v => v.Hit))
+        {
+            judged = await ConfirmMissesAsync(judged, tilePngs, target, lookForText, settings, account, ct);
+        }
+
+        var answer = DecideFromJudged(question, judged);
         if (answer == null)
         {
             _log.Warn($"题目里取不出要比对的目标词（原文「{question}」），本轮跳过", account);
@@ -691,14 +704,20 @@ public sealed class CaptchaService
     /// 而不是各写一份、又慢慢跑偏。返回 null 表示题目里取不出要比对的目标词。
     /// </summary>
     public static CaptchaAnswer? Decide(string question, IReadOnlyList<TileVerdict> verdicts)
+        => DecideFromJudged(question, ApplyQuestionMatch(verdicts, question));
+
+    /// <summary>
+    /// 在「命中与否已经定好」的列表上算出该点哪几张。
+    /// 拆出来是因为复核结果不能再过一次 <see cref="ApplyQuestionMatch"/>——复核是把目标词交给模型问出来的，
+    /// 它报回来的 seen 会被目标词带偏，按字面匹配会被判回「不符」，等于白问一遍。
+    /// </summary>
+    public static CaptchaAnswer? DecideFromJudged(string question, IReadOnlyList<TileVerdict> judged)
     {
         var target = ExtractLiteral(question) ?? ExtractTarget(question);
         if (target.Length == 0)
         {
             return null;
         }
-
-        var judged = ApplyQuestionMatch(verdicts, question);
 
         // 多张命中时按「匹配得多紧」排：完全同名最优先，其次描述里包含目标词，最后才看模型自报的置信度。
         // 原来只按置信度排，而 3B 对同类画面给的置信度完全相同，并列时稳定排序就永远落到第 1 张。
@@ -722,6 +741,58 @@ public sealed class CaptchaService
 
         return new CaptchaAnswer(question, hits.Select(h => h.Index).ToList(), hits[0].Confidence,
             string.Join(" ; ", judged.Select(v => v.Raw)));
+    }
+
+    /// <summary>
+    /// 零命中时的第二道复核：逐张问「图里有没有 X」，只有答「有」才算命中。
+    /// 两道关卡的区别要记住：第一道问「你看到什么」（不提目标，靠字符串匹配判），
+    /// 第二道直接把目标摆出来（问有／没有，只采信模型的是／否）。
+    /// 第二道有副作用——目标词进了提示词，模型报回来的 seen 会被带偏，所以它只在已经注定失败时才跑，
+    /// 而且跑完不再做字面匹配。
+    /// </summary>
+    private async Task<IReadOnlyList<TileVerdict>> ConfirmMissesAsync(IReadOnlyList<TileVerdict> judged,
+        IReadOnlyList<(int Index, byte[] Png)> tiles, string target, bool lookForText,
+        AppSettings settings, string account, CancellationToken ct)
+    {
+        var misses = judged.Where(v => !v.Hit).ToList();
+        if (misses.Count == 0 || tiles.Count == 0)
+        {
+            return judged;
+        }
+
+        _log.Info($"六张都判为不符合，改问「图里有没有「{target}」」复核 {misses.Count} 张", account);
+
+        var confirmed = new List<TileVerdict>();
+        foreach (var miss in misses)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var png = tiles.FirstOrDefault(t => t.Index == miss.Index).Png;
+            if (png == null)
+            {
+                continue;
+            }
+
+            var verdict = await _vision.ConfirmTileAsync(png, target, lookForText, miss.Index, settings, ct);
+            if (verdict is not { Hit: true })
+            {
+                continue;
+            }
+
+            confirmed.Add(miss with { Hit = true, Confidence = verdict.Confidence, Seen = verdict.Seen });
+        }
+
+        if (confirmed.Count == 0)
+        {
+            _log.Info("复核同样没找到符合的，按原判定处理", account);
+            return judged;
+        }
+
+        _log.Info("复核结果：" + string.Join("，", confirmed.Select(v => $"#{v.Index} 认为有")), account);
+
+        // 只把加进来的那几张替换掉，其余保持原判定，方便日志里对照两轮结果。
+        var upgraded = confirmed.ToDictionary(v => v.Index);
+        return judged.Select(v => upgraded.TryGetValue(v.Index, out var hit) ? hit : v).ToList();
     }
 
     /// <summary>题目是不是「选出所有符合的」这种多选问法。</summary>
