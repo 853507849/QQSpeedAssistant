@@ -1,4 +1,7 @@
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using QQSpeedAssistant.Models;
 using QQSpeedAssistant.Services;
@@ -17,6 +20,12 @@ public partial class App : Application
         base.OnStartup(e);
         DispatcherUnhandledException += OnDispatcherUnhandledException;
 
+        // 全局兜底：输入框的 Ctrl+V / Ctrl+C / Ctrl+X 都不再交给系统命令。
+        // 程序以管理员身份运行，剪贴板里若是别的进程（浏览器、远程桌面、剪贴板管理器）写入的文本，
+        // 系统粘贴命令的 CanExecute 会直接判定为不可粘贴；复制/剪切命令内部走的 WPF 剪贴板实现
+        // 在这台机器上还会抛 System.Reflection.Metadata 装载失败。三条统一改走 Win32 CF_UNICODETEXT。
+        EventManager.RegisterClassHandler(typeof(TextBox), Keyboard.PreviewKeyDownEvent, new KeyEventHandler(OnAnyTextBoxPreviewKeyDown));
+
         // 固定使用深色主题：避免跟随系统浅色主题时，默认控件模板出现白底浅字
         Wpf.Ui.Appearance.ApplicationThemeManager.Apply(Wpf.Ui.Appearance.ApplicationTheme.Dark);
 
@@ -24,6 +33,9 @@ public partial class App : Application
         {
             _services = AppServices.Create();
             _services.Log.Info($"程序启动：管理员权限={ElevationService.IsElevated}，屏幕={NativeMethods.ScreenWidth}x{NativeMethods.ScreenHeight}", "启动");
+
+            // 启动就读一次剪贴板并记下来：粘贴不进去时，这条能直接说明本进程到底能不能读剪贴板。
+            _services.Log.Info($"剪贴板自检：{DescribeClipboard()}", "界面");
 
             // 自检模式：只加载全部 XAML，不显示窗口，用于验证资源与绑定定义
             if (e.Args.Contains("--selftest"))
@@ -1769,6 +1781,184 @@ public partial class App : Application
         _services?.Dispose();
         base.OnExit(e);
     }
+
+    /// <summary>
+    /// 所有输入框的快捷键兜底：Ctrl+V 自己贴，Ctrl+C / Ctrl+X 自己写剪贴板，三条都不走 WPF 的系统命令。
+    ///
+    /// 粘贴命令先看 CanExecute（剪贴板里是否存在「可粘贴文本」），管理员进程读别的进程写入的剪贴板时
+    /// 常被判成不可用；复制/剪切命令内部调的是 <c>Clipboard.SetDataObject</c>，本机在管理员进程里会抛
+    /// <c>FileNotFoundException 'System.Reflection.Metadata, Version=11.0.0.0'</c>。
+    /// 两者都改走 Win32 的 CF_UNICODETEXT。
+    /// </summary>
+    private void OnAnyTextBoxPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox box
+            || (Keyboard.Modifiers & ModifierKeys.Control) != ModifierKeys.Control)
+        {
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.V:
+                var (pasted, pasteDetail) = PasteInto(box);
+
+                // 这条日志专门用来查「Ctrl+V 没反应」：有这条 → 键盘事件确实到了输入框，
+                // 问题在剪贴板那一步（detail 里写着原因）；一条都没有 → 按键被别的程序（输入法、钩子）吞了。
+                LogUi($"Ctrl+V → {(pasted ? "已写入" : "未写入")}｜{pasteDetail}");
+                if (pasted)
+                {
+                    e.Handled = true;
+                }
+
+                break;
+
+            case Key.C:
+                if (CopyFrom(box, cut: false))
+                {
+                    e.Handled = true;
+                }
+
+                break;
+
+            case Key.X:
+                if (CopyFrom(box, cut: true))
+                {
+                    e.Handled = true;
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 把输入框里选中的内容写进剪贴板，没选中就整段（单行框里这最符合直觉）。
+    /// <paramref name="cut"/> 为 true 时写完再把内容删掉。返回 false 表示没接手，交给 WPF 原逻辑。
+    /// </summary>
+    private static bool CopyFrom(TextBox box, bool cut)
+    {
+        var hasSelection = box.SelectionLength > 0;
+        var text = hasSelection ? box.SelectedText : box.Text;
+
+        if (string.IsNullOrEmpty(text))
+        {
+            LogUi($"{(cut ? "Ctrl+X" : "Ctrl+C")} → 未复制｜输入框里没有内容");
+            return false;
+        }
+
+        var ok = ClipboardService.WriteText(text, out var detail);
+        LogUi($"{(cut ? "Ctrl+X" : "Ctrl+C")} → {(ok ? "已复制" : "未复制")}｜{text.Length} 字" +
+              $"{(hasSelection ? "（选区）" : "（未选中，整段）")}，{detail}");
+
+        if (!ok)
+        {
+            return false;
+        }
+
+        // 剪切必须有选区：什么都没选还整段删掉，能把用户刚填好的密钥一次清空。
+        if (cut && hasSelection)
+        {
+            box.SelectedText = string.Empty;
+            box.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+        }
+
+        return true;
+    }
+
+    /// <summary>输入框右键菜单里的「复制」「剪切」。系统命令内部走 WPF 剪贴板，本机不通，改用 Tag 区分自己实现。</summary>
+    private void OnContextMenuCopy(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string action } item
+            && ItemsControl.ItemsControlFromItemContainer(item) is ContextMenu { PlacementTarget: TextBox box })
+        {
+            CopyFrom(box, cut: action == "cut");
+        }
+    }
+
+    /// <summary>输入框右键菜单里的「粘贴」。</summary>
+    private void OnContextMenuPaste(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem item
+            && ItemsControl.ItemsControlFromItemContainer(item) is ContextMenu { PlacementTarget: TextBox box })
+        {
+            var (ok, detail) = PasteInto(box);
+            LogUi($"右键粘贴 → {(ok ? "已写入" : "未写入")}｜{detail}");
+        }
+    }
+
+    /// <summary>读一次剪贴板并描述结果，只做诊断，不改剪贴板内容。</summary>
+    private static string DescribeClipboard()
+    {
+        var text = ClipboardService.ReadText(out var detail);
+        return text == null ? detail : $"可访问，{detail}";
+    }
+
+    /// <summary>界面操作日志：粘贴这类人工操作也记一条，出问题直接从日志页复制出来看。</summary>
+    internal static void LogUi(string message)
+    {
+        if (Current is App app)
+        {
+            app._services?.Log.Info(message, "界面");
+        }
+    }
+
+    /// <summary>
+    /// 把剪贴板文本写进输入框，返回是否成功加一句诊断说明。
+    /// 说明是给「粘贴没反应」用的：能分清是剪贴板里没文本、读不了（被占用／权限），还是已经写进去了。
+    /// </summary>
+    internal static (bool Ok, string Detail) PasteInto(TextBox box)
+    {
+        if (box.IsReadOnly)
+        {
+            return (false, "输入框是只读的");
+        }
+
+        var (text, readDetail) = ReadClipboardText();
+        if (text == null)
+        {
+            return (false, readDetail);
+        }
+
+        if (text.Length == 0)
+        {
+            return (false, $"剪贴板里是空文本（{readDetail}）");
+        }
+
+        var replaced = box.SelectionLength > 0;
+
+        // 单行框里粘到带换行的内容（从网页、表格复制很常见）压成一行，免得值里混进 \r\n。
+        if (!box.AcceptsReturn)
+        {
+            text = text.Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ').Trim();
+        }
+
+        box.SelectedText = text;
+        var binding = box.GetBindingExpression(TextBox.TextProperty);
+        binding?.UpdateSource();
+
+        return (true, $"{readDetail}，{(replaced ? "替换选区" : "插入光标处")}，绑定={(binding == null ? "无" : "已同步")}");
+    }
+
+    /// <summary>
+    /// 读剪贴板文本，交给 <see cref="ClipboardService"/>。
+    /// 不用 WPF 的 <c>Clipboard.GetDataObject()</c>：实测在管理员进程里它会抛
+    /// <c>FileNotFoundException 'System.Reflection.Metadata, Version=11.0.0.0'</c>
+    /// （.NET 10 的剪贴板实现改走 NRBF 反序列化，这台机器装载不到那个版本的程序集），一抛粘贴就废了。
+    /// </summary>
+    private static (string? Text, string Detail) ReadClipboardText()
+    {
+        var text = ClipboardService.ReadText(out var detail);
+        if (text != null)
+        {
+            return (text, detail);
+        }
+
+        // 读不到时把原因留在日志里：区分「剪贴板里没文本」和「打不开剪贴板」。
+        LogUi($"剪贴板读取失败：{detail}");
+        return (null, detail);
+    }
+
+    // 剪贴板的 Win32 读写都在 Services/ClipboardService.cs 里，这里不再重复定义 P/Invoke。
 
     /// <summary>未处理异常写入日志后继续运行，避免自动化过程中界面崩溃。</summary>
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

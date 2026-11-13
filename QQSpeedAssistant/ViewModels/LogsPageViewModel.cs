@@ -29,6 +29,10 @@ public sealed partial class LogsPageViewModel : ObservableObject
     [ObservableProperty]
     private string _summaryText = "";
 
+    /// <summary>复制结果提示（「已复制 N 条」或失败原因），由视图在复制后写入。</summary>
+    [ObservableProperty]
+    private string _copyHint = "";
+
     /// <summary>清空界面日志。</summary>
     [RelayCommand]
     private void Clear() => _services.Log.Clear();

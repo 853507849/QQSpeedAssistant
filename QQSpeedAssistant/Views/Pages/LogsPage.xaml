@@ -14,10 +14,17 @@
             <StackPanel Orientation="Horizontal" Margin="0,16,0,10">
                 <Button Content="清空显示" Command="{Binding ClearCommand}" />
                 <Button Content="打开日志目录" Command="{Binding OpenFolderCommand}" Margin="8,0,0,0" />
+                <Button Content="复制全部日志" Click="OnCopyAll" Margin="8,0,0,0"
+                        ToolTip="把当前显示的所有日志按「时间 级别 来源 内容」复制到剪贴板，可直接粘到聊天窗口" />
                 <TextBlock Text="{Binding SummaryText, Mode=OneWay}"
                            Style="{StaticResource Muted}"
                            VerticalAlignment="Center"
                            Margin="14,0,0,0" />
+                <TextBlock Text="{Binding CopyHint, Mode=OneWay}"
+                           Style="{StaticResource Muted}"
+                           VerticalAlignment="Center"
+                           Foreground="#4ADE80"
+                           Margin="10,0,0,0" />
             </StackPanel>
         </StackPanel>
 
@@ -26,7 +33,14 @@
                      ItemsSource="{Binding Logs}"
                      Background="Transparent"
                      BorderThickness="0"
+                     PreviewMouseRightButtonDown="OnLogListRightButtonDown"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="复制这一条" Click="OnCopySelected" />
+                        <MenuItem Header="复制全部日志" Click="OnCopyAll" />
+                    </ContextMenu>
+                </ListBox.ContextMenu>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
                         <Grid Margin="0,2">

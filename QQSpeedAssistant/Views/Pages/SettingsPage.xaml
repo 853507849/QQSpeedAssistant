@@ -553,8 +553,9 @@
                                     ToolTip="打开说明：列出免费方案与模型名，可一键填入"
                                     Command="{Binding OpenAiEndpointHelpCommand}" />
                         </StackPanel>
-                        <TextBox Grid.Column="1"
-                                 Text="{Binding Settings.CaptchaApiBaseUrl, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                        <TextBox x:Name="ApiBaseUrlBox"
+                                 Grid.Column="1"
+                                 Text="{Binding Settings.CaptchaApiBaseUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                         <TextBlock Grid.Column="2"
                                    Style="{StaticResource Muted}"
                                    VerticalAlignment="Center"
@@ -569,8 +570,23 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="接口密钥" Style="{StaticResource FieldLabel}" />
-                        <TextBox Grid.Column="1"
-                                 Text="{Binding Settings.CaptchaApiKey, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                        <Grid Grid.Column="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ApiKeyBox"
+                                     Text="{Binding Settings.CaptchaApiKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button Grid.Column="1"
+                                    Content="粘贴"
+                                    Style="{StaticResource SmallButton}"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Tag="ApiKeyBox"
+                                    ToolTip="把剪贴板里的文本贴进来；Ctrl+V 或右键都没反应时用它"
+                                    Click="OnPasteButtonClick" />
+                        </Grid>
                         <TextBlock Grid.Column="2"
                                    Text="智谱 apiKey（bigmodel.cn 控制台获取）；魔搭填 ms- 开头的令牌；本地 Ollama 可留空（地址填 http://127.0.0.1:11434/v1）"
                                    Style="{StaticResource Muted}"
@@ -586,8 +602,9 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="模型名" Style="{StaticResource FieldLabel}" />
-                        <TextBox Grid.Column="1"
-                                 Text="{Binding Settings.CaptchaModel, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                        <TextBox x:Name="ModelBox"
+                                 Grid.Column="1"
+                                 Text="{Binding Settings.CaptchaModel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                         <TextBlock Grid.Column="2"
                                    Text="必须支持图片输入。默认 glm-4.6v-flash（免费）；其他模型名在「怎么填？」里按平台列好了，可点选填入"
                                    Style="{StaticResource Muted}"
@@ -603,8 +620,9 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="备用模型" Style="{StaticResource FieldLabel}" />
-                        <TextBox Grid.Column="1"
-                                 Text="{Binding Settings.CaptchaFallbackModel, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                        <TextBox x:Name="FallbackModelBox"
+                                 Grid.Column="1"
+                                 Text="{Binding Settings.CaptchaFallbackModel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                         <TextBlock Grid.Column="2"
                                    Text="主模型被限流（429）时改用它，留空则不降级。智谱各免费模型配额独立，默认 glm-4v-flash；换平台时记得清空"
                                    Style="{StaticResource Muted}"

@@ -151,6 +151,31 @@
                 <Setter Property="Margin" Value="8,0,0,0" />
             </Style>
 
+            <!--
+                输入框右键菜单：WPF 的 TextBox 本身不带上下文菜单，自定义 Style 又覆盖了主题里的模板，
+                所以右键点进去只有光标、没有任何可点的项。这里显式给一份。
+                「粘贴」「复制」「剪切」都走自己的 Click：系统的这三个命令都要经过 WPF 的剪贴板实现，
+                本机在管理员进程里会抛 System.Reflection.Metadata 装载失败，表现为按了完全没反应。
+            -->
+            <ContextMenu x:Key="TextEditMenu">
+                <MenuItem Header="撤销"
+                          Command="ApplicationCommands.Undo"
+                          CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" />
+                <Separator />
+                <MenuItem Header="剪切"
+                          Tag="cut"
+                          Click="OnContextMenuCopy" />
+                <MenuItem Header="复制"
+                          Tag="copy"
+                          Click="OnContextMenuCopy" />
+                <MenuItem Header="粘贴"
+                          Click="OnContextMenuPaste" />
+                <Separator />
+                <MenuItem Header="全选"
+                          Command="ApplicationCommands.SelectAll"
+                          CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" />
+            </ContextMenu>
+
             <!-- 输入框 -->
             <Style TargetType="TextBox">
                 <Setter Property="Background" Value="{StaticResource InputBrush}" />
@@ -162,6 +187,7 @@
                 <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
                 <Setter Property="SelectionBrush" Value="{StaticResource AccentBrush}" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="ContextMenu" Value="{StaticResource TextEditMenu}" />
             </Style>
 
             <!-- 复选框：自定义模板，避免主题切换后出现纯白方块 -->

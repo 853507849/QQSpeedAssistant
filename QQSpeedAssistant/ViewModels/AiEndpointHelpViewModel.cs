@@ -4,6 +4,7 @@ using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using QQSpeedAssistant.Models;
+using QQSpeedAssistant.Services;
 
 namespace QQSpeedAssistant.ViewModels;
 
@@ -120,15 +121,9 @@ public sealed partial class AiEndpointHelpViewModel : ObservableObject
     private void CopyBaseUrl()
     {
         var url = SelectedPreset.BaseUrl;
-        try
-        {
-            Clipboard.SetText(url);
-            Status = $"已复制接口地址：{url}";
-        }
-        catch (Exception ex)
-        {
-            Status = $"复制失败（剪贴板被别的程序占用？）：{ex.Message}";
-        }
+        Status = ClipboardService.WriteText(url, out var detail)
+            ? $"已复制接口地址：{url}"
+            : $"复制失败（{detail}）";
     }
 
     /// <summary>复制模型名到剪贴板。</summary>
@@ -140,15 +135,10 @@ public sealed partial class AiEndpointHelpViewModel : ObservableObject
             return;
         }
 
-        try
-        {
-            Clipboard.SetText(SelectedModel.Id);
-            Status = $"已复制模型名：{SelectedModel.Id}";
-        }
-        catch (Exception ex)
-        {
-            Status = $"复制失败（剪贴板被别的程序占用？）：{ex.Message}";
-        }
+        var id = SelectedModel.Id;
+        Status = ClipboardService.WriteText(id, out var detail)
+            ? $"已复制模型名：{id}"
+            : $"复制失败（{detail}）";
     }
 
     /// <summary>打开该方案的密钥获取页。</summary>
