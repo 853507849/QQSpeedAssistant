@@ -264,6 +264,11 @@ public sealed class CaptchaService
     {
         tiles = 0;
 
+        // 抓图前必须把光标挪出窗口：鼠标停在「刷新验证」按钮上 0.5 秒就会弹出黑底白字的
+        // tooltip，那团提示正好压在第 3 张候选图上（实测连续四张截图全中，覆盖约 1/4 画面）。
+        // 后果是那一格永远读成「刷新验证」，多选题目必然少一张。
+        MoveCursorOutOfWindow(window);
+
         var screen = CaptchaWindowLocator.CaptureByScreen(window, log);
         var screenTiles = CountTiles(screen);
         if (screenTiles >= 2)
@@ -285,6 +290,28 @@ public sealed class CaptchaService
         print?.Dispose();
         tiles = screenTiles;
         return screen;
+    }
+
+    /// <summary>
+    /// 把光标挪到验证码窗口外面，等 tooltip 收起来再抓图。
+    /// 只有这一个目的：鼠标悬停在刷新按钮上会弹「刷新验证」气泡，而气泡正好盖住第 3 张候选图，
+    /// 让模型把「刷新验证」当成图里的字。点完刷新后光标本来就停在按钮上，所以这一步是必需的。
+    /// 窗口贴近屏幕左边时改往右边挪，避免挪出屏幕被系统夹回窗口内。
+    /// </summary>
+    private static void MoveCursorOutOfWindow(CaptchaWindowInfo window)
+    {
+        try
+        {
+            var x = window.Left >= 80 ? window.Left - 50 : window.Left + window.Width + 50;
+            var y = window.Top + window.Height / 2;
+
+            NativeMethods.SetCursorPos(x, y);
+            Thread.Sleep(140);
+        }
+        catch
+        {
+            // 挪不动就继续，顶多某一格多读到一行 tooltip 文字，不值得让整轮识别失败。
+        }
     }
 
     /// <summary>这一帧能切出多少块候选图；异常按 0 处理。</summary>
